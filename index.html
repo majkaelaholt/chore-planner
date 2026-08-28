@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4efe8" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Household" />
+  <title>Household — Chore Planner</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">⌂</div>
+        <div>
+          <div class="brand-title">Household</div>
+          <div class="brand-subtitle">done enough for today</div>
+        </div>
+      </div>
+      <nav class="desktop-nav">
+        <button class="nav-btn active" data-view="today"><span>☀️</span> Today</button>
+        <button class="nav-btn" data-view="planner"><span>🗓️</span> Planner</button>
+        <button class="nav-btn" data-view="chores"><span>🧽</span> Chores</button>
+        <button class="nav-btn" data-view="history"><span>✓</span> History</button>
+        <button class="nav-btn" data-view="settings"><span>⚙️</span> Settings</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="mini-status" id="sidebarStatus">Everything is saved on this device.</div>
+      </div>
+    </aside>
+
+    <main class="main" id="mainContent">
+      <section class="view active" id="view-today" aria-labelledby="todayTitle">
+        <div class="page-head today-head">
+          <div>
+            <p class="eyebrow" id="todayDate"></p>
+            <h1 id="todayTitle">Today</h1>
+            <p class="page-subtitle">Only what actually needs your attention today.</p>
+          </div>
+          <button class="ghost-btn desktop-only" id="openPlannerBtn">Open weekly planner</button>
+        </div>
+
+        <div id="doneBanner" class="done-banner hidden">
+          <div class="done-icon">✨</div>
+          <div>
+            <h2>You’re done for today.</h2>
+            <p id="doneBannerText">Everything else can wait.</p>
+          </div>
+        </div>
+
+        <div class="today-grid">
+          <section class="panel primary-panel">
+            <div class="panel-head">
+              <div>
+                <p class="section-kicker">TODAY’S PLAN</p>
+                <h2 id="todayPlanHeading">Household chores</h2>
+              </div>
+              <span class="count-pill" id="todayCount">0 left</span>
+            </div>
+            <div id="todayTaskList" class="task-list"></div>
+            <div id="todayEmpty" class="empty-state hidden">
+              <div class="empty-illustration">☕</div>
+              <h3>Nothing else is required today.</h3>
+              <p>The rest of the house can wait until its turn.</p>
+            </div>
+          </section>
+
+          <aside class="today-side">
+            <section class="panel compact-panel">
+              <p class="section-kicker">TODAY, SO FAR</p>
+              <div class="today-stat"><strong id="completedTodayCount">0</strong><span>chores completed</span></div>
+              <div id="completedTodayList" class="mini-list"></div>
+            </section>
+
+            <section class="panel energy-panel">
+              <div>
+                <p class="section-kicker">OPTIONAL</p>
+                <h3>Still have some energy?</h3>
+                <p>Only look ahead if you genuinely want to.</p>
+              </div>
+              <button class="primary-btn" id="energyBtn">✨ I have energy for more</button>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-planner" aria-labelledby="plannerTitle">
+        <div class="page-head planner-head">
+          <div>
+            <p class="eyebrow">WEEKLY RESET</p>
+            <h1 id="plannerTitle">Weekly Planner</h1>
+            <p class="page-subtitle">Generate a sensible week, then drag things around until it feels right.</p>
+          </div>
+          <div class="planner-actions">
+            <button class="ghost-btn" id="prevWeekBtn" aria-label="Previous week">←</button>
+            <button class="ghost-btn week-label" id="weekLabelBtn"></button>
+            <button class="ghost-btn" id="nextWeekBtn" aria-label="Next week">→</button>
+            <button class="primary-btn" id="generateWeekBtn">Auto-plan week</button>
+          </div>
+        </div>
+        <div class="planner-note"><strong>Planning rule:</strong> chores are scheduled on or after their due date, inside their grace window when possible. Future chores are not pulled forward just to fill empty days.</div>
+        <div class="week-board" id="weekBoard"></div>
+        <div class="planner-footer">
+          <button class="secondary-btn" id="addOneOffBtn">＋ Add one-off chore</button>
+          <button class="secondary-btn" id="rebalanceBtn">↻ Rebalance remaining week</button>
+        </div>
+      </section>
+
+      <section class="view" id="view-chores" aria-labelledby="choresTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">HOUSEHOLD LIBRARY</p>
+            <h1 id="choresTitle">Chores</h1>
+            <p class="page-subtitle">Recurring routines live here quietly until they matter.</p>
+          </div>
+          <button class="primary-btn" id="addChoreBtn">＋ Add chore</button>
+        </div>
+        <div class="toolbar">
+          <div class="segmented" id="categoryFilters"></div>
+          <label class="search-wrap"><span>⌕</span><input type="search" id="choreSearch" placeholder="Search chores" /></label>
+        </div>
+        <div class="chore-table-wrap">
+          <table class="chore-table">
+            <thead><tr><th>Chore</th><th>Category</th><th>Rhythm</th><th>Importance</th><th>Last done</th><th>Next due</th><th>Default</th><th></th></tr></thead>
+            <tbody id="choreTableBody"></tbody>
+          </table>
+        </div>
+        <div id="choreCardsMobile" class="chore-cards-mobile"></div>
+      </section>
+
+      <section class="view" id="view-history" aria-labelledby="historyTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">JUST THE RECORD</p>
+            <h1 id="historyTitle">History</h1>
+            <p class="page-subtitle">A simple record of what got done and who handled it.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div id="historyList" class="history-list"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings" aria-labelledby="settingsTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">SETUP</p>
+            <h1 id="settingsTitle">Settings</h1>
+            <p class="page-subtitle">Keep the system forgiving, predictable, and yours.</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <section class="panel">
+            <div class="panel-head"><div><p class="section-kicker">HOUSEHOLD</p><h2>People</h2></div></div>
+            <div class="form-grid two-col">
+              <label>Person 1<input id="person1Input" type="text" /></label>
+              <label>Person 2<input id="person2Input" type="text" /></label>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><p class="section-kicker">GRACE WINDOWS</p><h2>Default flexibility</h2></div></div>
+            <p class="setting-help">A chore can be scheduled within this many days after its target date before it is considered overdue.</p>
+            <div class="form-grid three-col">
+              <label>Essential<input id="graceEssential" type="number" min="0" max="14" /></label>
+              <label>Regular<input id="graceRegular" type="number" min="0" max="14" /></label>
+              <label>Low stakes<input id="graceLow" type="number" min="0" max="30" /></label>
+            </div>
+          </section>
+          <section class="panel span-two">
+            <div class="panel-head"><div><p class="section-kicker">CLOUD BACKUP</p><h2>Supabase sync</h2></div><span class="status-dot" id="syncDot"></span></div>
+            <p class="setting-help">The app works fully with local storage. Supabase is optional and uses one JSON state row so GitHub Pages can stay simple.</p>
+            <div class="form-grid two-col">
+              <label>Supabase project URL<input id="supabaseUrl" type="url" placeholder="https://your-project.supabase.co" /></label>
+              <label>Publishable / anon key<input id="supabaseKey" type="password" placeholder="sb_publishable_…" /></label>
+              <label>Household sync ID<input id="syncId" type="text" placeholder="mak-household" /></label>
+            </div>
+            <div class="button-row">
+              <button class="secondary-btn" id="saveSettingsBtn">Save settings</button>
+              <button class="secondary-btn" id="pushCloudBtn">↑ Push backup</button>
+              <button class="secondary-btn" id="pullCloudBtn">↓ Pull backup</button>
+            </div>
+            <p class="tiny-text">See <strong>SUPABASE_SETUP.md</strong> in the project for the one-time table setup.</p>
+          </section>
+          <section class="panel span-two danger-lite">
+            <div class="panel-head"><div><p class="section-kicker">DATA</p><h2>Backup & reset</h2></div></div>
+            <div class="button-row">
+              <button class="secondary-btn" id="exportBtn">Export JSON backup</button>
+              <label class="secondary-btn file-btn">Import JSON<input id="importInput" type="file" accept="application/json" /></label>
+              <button class="text-btn danger" id="resetDemoBtn">Reset to starter chores</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <nav class="mobile-nav" aria-label="Mobile navigation">
+      <button class="mobile-nav-btn active" data-view="today"><span>☀️</span><small>Today</small></button>
+      <button class="mobile-nav-btn" data-view="planner"><span>🗓️</span><small>Planner</small></button>
+      <button class="mobile-nav-btn" data-view="chores"><span>🧽</span><small>Chores</small></button>
+      <button class="mobile-nav-btn" data-view="settings"><span>⚙️</span><small>More</small></button>
+    </nav>
+  </div>
+
+  <dialog id="choreDialog" class="modal">
+    <form method="dialog" id="choreForm">
+      <div class="modal-head"><div><p class="section-kicker" id="choreModalKicker">NEW ROUTINE</p><h2 id="choreModalTitle">Add chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <input type="hidden" id="choreId" />
+      <div class="form-grid two-col">
+        <label class="span-two">Chore name<input id="choreName" required maxlength="80" placeholder="e.g. Wipe surfaces" /></label>
+        <label>Category<select id="choreCategory"></select></label>
+        <label>Default person<select id="choreAssignee"></select></label>
+        <label>Repeat every<input id="recurrenceValue" type="number" min="1" max="365" value="7" required /></label>
+        <label>Unit<select id="recurrenceUnit"><option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option></select></label>
+        <label>Importance<select id="choreImportance"><option value="essential">Essential</option><option value="regular" selected>Regular</option><option value="low">Low stakes</option></select></label>
+        <label>Grace override<input id="choreGrace" type="number" min="0" max="30" placeholder="Use default" /></label>
+        <label>Schedule behavior<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select></label>
+        <label>Last completed<input id="lastCompleted" type="date" /></label>
+        <label class="span-two">Areas / notes <span class="optional">optional</span><input id="choreAreas" maxlength="120" placeholder="e.g. bedroom, office, living room" /></label>
+      </div>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="saveChoreBtn" value="default">Save chore</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="completeDialog" class="modal small-modal">
+    <form method="dialog" id="completeForm">
+      <div class="modal-head"><div><p class="section-kicker">MARK COMPLETE</p><h2 id="completeTaskName">Chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <input type="hidden" id="completeInstanceId" />
+      <label>Who did it?<select id="completedBy"></select></label>
+      <div id="completionScheduleChoice" class="choice-box hidden">
+        <strong>Start tracking again from today?</strong>
+        <label class="radio-row"><input type="radio" name="scheduleChoice" value="completion" checked /> Yes — next due from today</label>
+        <label class="radio-row"><input type="radio" name="scheduleChoice" value="fixed" /> No — keep original rhythm</label>
+      </div>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmCompleteBtn" value="default">Done ✓</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="energyDialog" class="modal energy-modal">
+    <form method="dialog">
+      <div class="modal-head"><div><p class="section-kicker">OPTIONAL MODE</p><h2>Want one more thing?</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <p class="modal-copy">These are suggestions, not obligations. Pick one if it sounds satisfying — or close this and be done.</p>
+      <div class="energy-filters" id="energyFilters">
+        <button type="button" class="chip active" data-energy="soon">Due soon</button>
+        <button type="button" class="chip" data-energy="quick">Quick win</button>
+        <button type="button" class="chip" data-energy="deep">Deep clean</button>
+        <button type="button" class="chip" data-energy="future">Help future me</button>
+      </div>
+      <div id="energySuggestions" class="task-list"></div>
+      <div class="modal-actions"><button class="secondary-btn" value="cancel">I’m done for today</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="oneOffDialog" class="modal small-modal">
+    <form method="dialog" id="oneOffForm">
+      <div class="modal-head"><div><p class="section-kicker">ONE-OFF</p><h2>Add chore to this week</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <div class="form-grid">
+        <label>Chore name<input id="oneOffName" required maxlength="80" placeholder="e.g. Clean out closet" /></label>
+        <label>Date<input id="oneOffDate" type="date" required /></label>
+        <label>Assign to<select id="oneOffAssignee"></select></label>
+        <label>Category<select id="oneOffCategory"></select></label>
+      </div>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="saveOneOffBtn" value="default">Add to week</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="moveDialog" class="modal small-modal">
+    <form method="dialog" id="moveForm">
+      <div class="modal-head"><div><p class="section-kicker">MOVE CHORE</p><h2 id="moveTaskName">Move chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <input type="hidden" id="moveInstanceId" />
+      <label>Move to<input id="moveDate" type="date" required /></label>
+      <label>Assigned to<select id="moveAssignee"></select></label>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmMoveBtn" value="default">Move</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+</body>
+</html>
