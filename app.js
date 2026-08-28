@@ -8,11 +8,14 @@
   const dayMs = 86400000;
   let plannerWeekStart = startOfWeek(new Date());
   let activeCategory = 'All';
+  let choreFilters = { importance:'all', assignee:'all', tag:'all', status:'all' };
+  let choreSort = { key:'name', dir:'asc' };
+  let selectedChoreIds = new Set();
   let energyMode = 'soon';
   let toastTimer;
 
   const starter = () => ({
-    version: 1.2,
+    version: 1.4,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -56,7 +59,8 @@
     ],
     instances: [],
     history: [],
-    lastAutoPlanAt: null
+    lastAutoPlanAt: null,
+    customDefault: null
   });
 
   // Default chores start with no fabricated completion history. starterDueInDays seeds
@@ -64,15 +68,13 @@
   // was completed when it was not.
   function makeChore(name, category, recurrenceValue, recurrenceUnit, importance, assignee, scheduleBehavior, starterDueInDays=0, areas='') {
     const due = addDays(today(), Number(starterDueInDays)||0);
-    const anchor = new Date(due);
-    if (recurrenceUnit==='days') anchor.setDate(anchor.getDate()-Number(recurrenceValue));
-    if (recurrenceUnit==='weeks') anchor.setDate(anchor.getDate()-(7*Number(recurrenceValue)));
-    if (recurrenceUnit==='months') anchor.setMonth(anchor.getMonth()-Number(recurrenceValue));
     return {
-      id: uid('chore'), name, category, recurrenceValue, recurrenceUnit, importance, assignee,
-      scheduleBehavior, areas, graceOverride: null,
-      lastCompleted: null,
-      anchorDate: toISO(anchor),
+      id: uid('chore'), name, category, recurrenceType:'interval', recurrenceValue, recurrenceUnit, importance, assignee,
+      scheduleBehavior, areas, tags: [], graceOverride: null,
+      lastCompleted: null, lastDueSatisfied: null,
+      startDate: toISO(due), nextDueOverride: null,
+      // anchorDate is kept for backward-compatible imports, but startDate is the v1.4 schedule anchor.
+      anchorDate: toISO(due),
       active: true, createdAt: new Date().toISOString()
     };
   }
@@ -94,10 +96,38 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      chores: Array.isArray(s.chores) ? s.chores : base.chores,
+      version: 1.4,
+      chores: Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores,
       instances: Array.isArray(s.instances) ? s.instances : [],
-      history: Array.isArray(s.history) ? s.history : []
+      history: Array.isArray(s.history) ? s.history : [],
+      customDefault: normalizeDefaultSnapshot(s.customDefault)
     };
+  }
+
+  function normalizeChore(c) {
+    const out={...c,tags:normalizeTags(c.tags)};
+    out.recurrenceType=out.recurrenceType||'interval';
+    out.recurrenceValue=Math.max(1,Number(out.recurrenceValue)||1);
+    out.recurrenceUnit=out.recurrenceUnit||'days';
+    out.weekday=Number.isInteger(Number(out.weekday))?Number(out.weekday):0;
+    out.monthDay=Math.min(31,Math.max(1,Number(out.monthDay)||1));
+    out.monthOrdinal=String(out.monthOrdinal??'1');
+    out.monthWeekday=Number.isInteger(Number(out.monthWeekday))?Number(out.monthWeekday):0;
+    out.nextDueOverride=out.nextDueOverride||null;
+    out.lastDueSatisfied=out.lastDueSatisfied||null;
+    if(!out.startDate){
+      // v1.3 stored an anchor one interval before the first due date. Migrate that into a real first-due/start date.
+      const legacyBase=out.anchorDate||out.lastCompleted||(out.createdAt?out.createdAt.slice(0,10):toISO(today()));
+      if(out.lastCompleted && out.scheduleBehavior!=='fixed') out.startDate=out.anchorDate||out.lastCompleted;
+      else out.startDate=toISO(addInterval(parseISO(legacyBase),out.recurrenceValue,out.recurrenceUnit));
+    }
+    out.anchorDate=out.startDate;
+    return out;
+  }
+
+  function normalizeDefaultSnapshot(snapshot){
+    if(!snapshot||!Array.isArray(snapshot.chores)) return null;
+    return {...snapshot,chores:snapshot.chores.map(normalizeChore)};
   }
 
   function saveState(message='Saved') {
@@ -108,6 +138,13 @@
   }
 
   function uid(prefix='id') { return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`; }
+  function normalizeTags(value) {
+    const raw = Array.isArray(value) ? value : (typeof value==='string' ? value.split(',') : []);
+    const seen = new Set();
+    return raw.map(v=>String(v).trim()).filter(Boolean).filter(v=>{const k=v.toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});
+  }
+  function tagKey(value='') { return String(value).trim().toLowerCase(); }
+  function tagMarkup(tags=[]) { return normalizeTags(tags).map(t=>`<span class="tag-pill">${esc(t)}</span>`).join(''); }
   function today() { const d = new Date(); d.setHours(0,0,0,0); return d; }
   function parseISO(s) { const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); }
   function toISO(d) { const x = new Date(d); x.setMinutes(x.getMinutes()-x.getTimezoneOffset()); return x.toISOString().slice(0,10); }
@@ -129,31 +166,105 @@
     if (diff< -1 && diff>-7) return `${Math.abs(diff)} days ago`;
     return formatShort(iso);
   }
+  const WEEKDAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const ORDINAL_LABEL={1:'1st',2:'2nd',3:'3rd',4:'4th',5:'5th','-1':'Last'};
   function recurrenceText(c) {
-    const unit = c.recurrenceValue===1 ? c.recurrenceUnit.replace(/s$/,'') : c.recurrenceUnit;
-    return `Every ${c.recurrenceValue} ${unit}`;
+    const type=c.recurrenceType||'interval';
+    const n=Math.max(1,Number(c.recurrenceValue)||1);
+    if(type==='weekly') return `${n===1?'Every week':`Every ${n} weeks`} on ${WEEKDAYS[Number(c.weekday)||0]}`;
+    if(type==='monthly-day') return `${n===1?'Every month':`Every ${n} months`} on the ${ordinalDay(Number(c.monthDay)||1)}`;
+    if(type==='monthly-weekday') return `${n===1?'Every month':`Every ${n} months`} on the ${ORDINAL_LABEL[String(c.monthOrdinal)]||'1st'} ${WEEKDAYS[Number(c.monthWeekday)||0]}`;
+    const unit=n===1?(c.recurrenceUnit||'days').replace(/s$/,''):(c.recurrenceUnit||'days');
+    return `Every ${n} ${unit}`;
   }
-  function addRecurrence(date, chore) {
-    const x = new Date(date);
-    if (chore.recurrenceUnit==='days') x.setDate(x.getDate()+Number(chore.recurrenceValue));
-    if (chore.recurrenceUnit==='weeks') x.setDate(x.getDate()+7*Number(chore.recurrenceValue));
-    if (chore.recurrenceUnit==='months') x.setMonth(x.getMonth()+Number(chore.recurrenceValue));
+  function ordinalDay(n){
+    const mod100=n%100;if(mod100>=11&&mod100<=13)return `${n}th`;
+    return `${n}${({1:'st',2:'nd',3:'rd'}[n%10]||'th')}`;
+  }
+  function addInterval(date,value,unit){
+    const x=new Date(date);const n=Math.max(1,Number(value)||1);
+    if(unit==='days') x.setDate(x.getDate()+n);
+    if(unit==='weeks') x.setDate(x.getDate()+7*n);
+    if(unit==='months') x.setMonth(x.getMonth()+n);
     return x;
+  }
+  function addRecurrence(date,chore){ return addInterval(date,chore.recurrenceValue,chore.recurrenceUnit); }
+  function monthsBetweenAnchors(a,b){return (b.getFullYear()-a.getFullYear())*12+(b.getMonth()-a.getMonth());}
+  function nthWeekdayOfMonth(year,month,weekday,ordinal){
+    const ord=Number(ordinal);
+    if(ord===-1){const d=new Date(year,month+1,0);d.setDate(d.getDate()-((d.getDay()-weekday+7)%7));return d;}
+    const first=new Date(year,month,1);const offset=(weekday-first.getDay()+7)%7;const d=new Date(year,month,1+offset+7*(Math.max(1,ord)-1));
+    return d.getMonth()===month?d:null;
+  }
+  function monthlyCandidate(chore,year,month){
+    if((chore.recurrenceType||'interval')==='monthly-day'){
+      const requested=Math.min(31,Math.max(1,Number(chore.monthDay)||1));
+      const last=new Date(year,month+1,0).getDate();
+      return new Date(year,month,Math.min(requested,last));
+    }
+    return nthWeekdayOfMonth(year,month,Number(chore.monthWeekday)||0,chore.monthOrdinal||1);
+  }
+  function calendarAnchorOccurrence(chore){
+    const type=chore.recurrenceType||'interval';const start=parseISO(chore.startDate||toISO(today()));
+    if(type==='weekly')return addDays(start,((Number(chore.weekday)||0)-start.getDay()+7)%7);
+    if(type==='monthly-day'||type==='monthly-weekday'){
+      let cursor=new Date(start.getFullYear(),start.getMonth(),1);
+      for(let guard=0;guard<36;guard++){
+        const candidate=monthlyCandidate(chore,cursor.getFullYear(),cursor.getMonth());
+        if(candidate&&candidate>=start)return candidate;
+        cursor=new Date(cursor.getFullYear(),cursor.getMonth()+1,1);
+      }
+    }
+    return start;
+  }
+  function firstCalendarOccurrenceOnOrAfter(chore,fromDate){
+    const type=chore.recurrenceType||'interval';
+    const anchor=calendarAnchorOccurrence(chore);
+    let from=parseDateish(fromDate);if(from<anchor)from=new Date(anchor);
+    const interval=Math.max(1,Number(chore.recurrenceValue)||1);
+    if(type==='weekly'){
+      let d=new Date(from);const target=Number(chore.weekday)||0;d=addDays(d,(target-d.getDay()+7)%7);
+      const anchorWeek=startOfWeek(anchor);
+      while(Math.max(0,Math.floor(daysBetween(anchorWeek,startOfWeek(d))/7))%interval!==0)d=addDays(d,7);
+      return d;
+    }
+    if(type==='monthly-day'||type==='monthly-weekday'){
+      const anchorMonth=new Date(anchor.getFullYear(),anchor.getMonth(),1);
+      let cursor=new Date(from.getFullYear(),from.getMonth(),1);
+      for(let guard=0;guard<2400;guard++){
+        const mdiff=monthsBetweenAnchors(anchorMonth,cursor);
+        if(mdiff>=0&&mdiff%interval===0){
+          const candidate=monthlyCandidate(chore,cursor.getFullYear(),cursor.getMonth());
+          if(candidate&&candidate>=anchor&&candidate>=from)return candidate;
+        }
+        cursor=new Date(cursor.getFullYear(),cursor.getMonth()+1,1);
+      }
+    }
+    return from;
+  }
+  function naturalNextDue(chore){
+    const type=chore.recurrenceType||'interval';
+    const start=chore.startDate||chore.anchorDate||(chore.createdAt?chore.createdAt.slice(0,10):toISO(today()));
+    const effectiveBehavior=chore.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore.scheduleBehavior;
+    if(type!=='interval'){
+      if(!chore.lastCompleted&&!chore.lastDueSatisfied)return toISO(firstCalendarOccurrenceOnOrAfter(chore,parseISO(start)));
+      const after=maxISO(chore.lastDueSatisfied,chore.lastCompleted,start);
+      return toISO(firstCalendarOccurrenceOnOrAfter(chore,addDays(parseISO(after),1)));
+    }
+    if(!chore.lastCompleted)return start;
+    if(effectiveBehavior!=='fixed')return toISO(addRecurrence(parseISO(chore.lastCompleted),chore));
+    const satisfied=maxISO(chore.lastDueSatisfied,chore.lastCompleted,start);
+    let due=parseISO(start);
+    while(due<=parseISO(satisfied))due=addRecurrence(due,chore);
+    return toISO(due);
+  }
+  function nextDue(chore,ignoreOverride=false){
+    if(!ignoreOverride&&chore.nextDueOverride)return chore.nextDueOverride;
+    return naturalNextDue(chore);
   }
   function getGrace(chore) {
     return chore.graceOverride !== null && chore.graceOverride !== '' && chore.graceOverride !== undefined
       ? Number(chore.graceOverride) : Number(state.settings.grace[chore.importance] ?? 2);
-  }
-  function nextDue(chore) {
-    const effectiveBehavior = chore.scheduleBehavior==='ask' ? (chore.lastCompletionChoice || 'completion') : chore.scheduleBehavior;
-    const base = effectiveBehavior==='fixed' ? (chore.anchorDate || chore.lastCompleted || chore.createdAt.slice(0,10)) : (chore.lastCompleted || chore.anchorDate || chore.createdAt.slice(0,10));
-    let due = addRecurrence(parseISO(base), chore);
-    // For fixed schedules, keep stepping forward from anchor until the first cycle after the most recent completion.
-    if (effectiveBehavior==='fixed' && chore.lastCompleted) {
-      const completed = parseISO(chore.lastCompleted);
-      while (due <= completed) due = addRecurrence(due, chore);
-    }
-    return toISO(due);
   }
   function choreById(id) { return state.chores.find(c=>c.id===id); }
   function instanceById(id) { return state.instances.find(i=>i.id===id); }
@@ -262,13 +373,14 @@
       const chore=choreById(i.choreId);
       if(chore){
         chore.lastCompleted=toISO(today());
+        chore.lastDueSatisfied=i.originalDue||i.scheduledDate||toISO(today());
+        chore.nextDueOverride=null;
         const behavior=scheduleChoice || chore.scheduleBehavior;
         if(chore.scheduleBehavior==='ask' && scheduleChoice) chore.lastCompletionChoice=scheduleChoice;
-        if(behavior==='fixed') {
-          if(!chore.anchorDate) chore.anchorDate=i.originalDue||toISO(today());
-        } else {
+        if((chore.recurrenceType||'interval')==='interval' && behavior!=='fixed') {
+          // Completion-based interval chores restart their rhythm from the day they were actually done.
           chore.anchorDate=toISO(today());
-        }
+        } else chore.anchorDate=chore.startDate||chore.anchorDate||i.originalDue||toISO(today());
       }
     }
     saveState('Marked complete');
@@ -353,22 +465,194 @@
     return el;
   }
 
+  function recurrenceDays(c){
+    const n=Number(c.recurrenceValue)||1;
+    if(c.recurrenceUnit==='weeks') return n*7;
+    if(c.recurrenceUnit==='months') return n*30.4375;
+    return n;
+  }
+
+  function choreDueStatus(c){
+    const due=parseISO(nextDue(c));
+    const now=today();
+    const overdueAfter=addDays(due,getGrace(c));
+    if(now>overdueAfter) return 'overdue';
+    if(now>=due) return 'due';
+    return 'upcoming';
+  }
+
+  function allChoreTags(){
+    const map=new Map();
+    state.chores.filter(c=>c.active!==false).forEach(c=>normalizeTags(c.tags).forEach(t=>{const k=tagKey(t);if(!map.has(k))map.set(k,t);}));
+    return [...map.values()].sort((a,b)=>a.localeCompare(b));
+  }
+
+  function filteredSortedChores(){
+    const q=(document.getElementById('choreSearch')?.value||'').trim().toLowerCase();
+    const importance=choreFilters.importance;
+    const assignee=choreFilters.assignee;
+    const tag=choreFilters.tag;
+    const status=choreFilters.status;
+    const importanceRank={essential:0,regular:1,low:2};
+    const dir=choreSort.dir==='desc'?-1:1;
+    const chores=state.chores.filter(c=>{
+      if(c.active===false) return false;
+      if(activeCategory!=='All'&&c.category!==activeCategory) return false;
+      if(importance!=='all'&&c.importance!==importance) return false;
+      if(assignee!=='all'&&normalizeAssignee(c.assignee)!==assignee) return false;
+      if(tag!=='all'&&!normalizeTags(c.tags).some(t=>tagKey(t)===tagKey(tag))) return false;
+      if(status!=='all'){
+        const s=choreDueStatus(c);
+        if(status==='due'&&!(s==='due'||s==='overdue')) return false;
+        if(status==='overdue'&&s!=='overdue') return false;
+        if(status==='upcoming'&&s!=='upcoming') return false;
+        if(status==='never'&&!!c.lastCompleted) return false;
+      }
+      if(q){
+        const hay=`${c.name} ${c.category} ${c.areas||''} ${normalizeTags(c.tags).join(' ')}`.toLowerCase();
+        if(!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const value=(c,key)=>{
+      if(key==='name') return c.name.toLowerCase();
+      if(key==='category') return c.category.toLowerCase();
+      if(key==='recurrence') return recurrenceDays(c);
+      if(key==='importance') return importanceRank[c.importance]??1;
+      if(key==='lastCompleted') return c.lastCompleted?parseISO(c.lastCompleted).getTime():0;
+      if(key==='nextDue') return parseISO(nextDue(c)).getTime();
+      if(key==='assignee') return personLabel(normalizeAssignee(c.assignee)).toLowerCase();
+      return c.name.toLowerCase();
+    };
+    chores.sort((a,b)=>{
+      const av=value(a,choreSort.key), bv=value(b,choreSort.key);
+      const cmp=typeof av==='string'?av.localeCompare(bv):av-bv;
+      return (cmp||a.name.localeCompare(b.name))*dir;
+    });
+    return chores;
+  }
+
+  function setChoreSort(key, dir=null){
+    if(dir){ choreSort={key,dir}; }
+    else if(choreSort.key===key){ choreSort.dir=choreSort.dir==='asc'?'desc':'asc'; }
+    else { choreSort={key,dir:(key==='lastCompleted'?'desc':'asc')}; }
+    const sortSelect=document.getElementById('choreSortSelect');
+    if(sortSelect){
+      const value=`${choreSort.key}:${choreSort.dir}`;
+      if([...sortSelect.options].some(o=>o.value===value)) sortSelect.value=value;
+    }
+    renderChores();
+  }
+
+  function toggleChoreSelection(id, checked){
+    if(checked) selectedChoreIds.add(id); else selectedChoreIds.delete(id);
+    renderChores();
+  }
+
+  function updateSelectionUI(visible){
+    const existing=new Set(state.chores.map(c=>c.id));
+    selectedChoreIds=new Set([...selectedChoreIds].filter(id=>existing.has(id)));
+    const selectedCount=selectedChoreIds.size;
+    const selectedVisible=visible.filter(c=>selectedChoreIds.has(c.id)).length;
+    const allVisible=visible.length>0&&selectedVisible===visible.length;
+    const selectBox=document.getElementById('selectVisibleCheckbox');
+    if(selectBox){selectBox.checked=allVisible;selectBox.indeterminate=selectedVisible>0&&!allVisible;}
+    document.getElementById('batchBar')?.classList.toggle('hidden',selectedCount===0);
+    const selectedLabel=document.getElementById('selectedChoreCount');if(selectedLabel)selectedLabel.textContent=selectedCount;
+    const results=document.getElementById('choreResultsCount');if(results)results.textContent=`${visible.length} chore${visible.length===1?'':'s'} shown`;
+    const allBtn=document.getElementById('selectAllFilteredBtn');
+    if(allBtn){allBtn.disabled=!visible.length;allBtn.textContent=allVisible?'Deselect all shown':`Select all shown${visible.length?` (${visible.length})`:''}`;}
+  }
+
   function renderChores(){
     const filters=document.getElementById('categoryFilters'); filters.innerHTML='';
     ['All',...CATEGORIES].forEach(cat=>{const b=document.createElement('button');b.className='chip'+(activeCategory===cat?' active':'');b.textContent=cat;b.addEventListener('click',()=>{activeCategory=cat;renderChores();});filters.appendChild(b);});
-    const q=(document.getElementById('choreSearch').value||'').toLowerCase();
-    const chores=state.chores.filter(c=>c.active!==false&&(activeCategory==='All'||c.category===activeCategory)&&(!q||`${c.name} ${c.areas||''}`.toLowerCase().includes(q))).sort((a,b)=>a.name.localeCompare(b.name));
+
+    const personFilter=document.getElementById('assigneeFilter');
+    if(personFilter){
+      const [p1,p2]=currentPeople();
+      personFilter.innerHTML=`<option value="all">All people</option><option value="either">Either</option><option value="person1">${esc(p1)}</option><option value="person2">${esc(p2)}</option>`;
+      personFilter.value=choreFilters.assignee;
+    }
+    const tagFilter=document.getElementById('tagFilter');
+    if(tagFilter){
+      const tags=allChoreTags();
+      tagFilter.innerHTML='<option value="all">All tags</option>'+tags.map(t=>`<option value="${esc(tagKey(t))}">${esc(t)}</option>`).join('');
+      if(tags.some(t=>tagKey(t)===tagKey(choreFilters.tag))) tagFilter.value=tagKey(choreFilters.tag); else {choreFilters.tag='all';tagFilter.value='all';}
+    }
+    const imp=document.getElementById('importanceFilter');if(imp)imp.value=choreFilters.importance;
+    const status=document.getElementById('dueStatusFilter');if(status)status.value=choreFilters.status;
+    const sortSelect=document.getElementById('choreSortSelect');
+    if(sortSelect){const v=`${choreSort.key}:${choreSort.dir}`;if([...sortSelect.options].some(o=>o.value===v))sortSelect.value=v;}
+
+    document.querySelectorAll('.sort-head').forEach(btn=>{
+      const active=btn.dataset.sort===choreSort.key;
+      btn.classList.toggle('active',active);
+      const ind=btn.querySelector('.sort-indicator');if(ind)ind.textContent=active?(choreSort.dir==='asc'?'↑':'↓'):'';
+    });
+
+    const chores=filteredSortedChores();
     const body=document.getElementById('choreTableBody');body.innerHTML='';
     const mobile=document.getElementById('choreCardsMobile');mobile.innerHTML='';
+    if(!chores.length){
+      body.innerHTML='<tr><td colspan="9"><div class="table-empty">No chores match these filters.</div></td></tr>';
+      mobile.innerHTML='<div class="empty-state compact-empty"><h3>No matching chores</h3><p>Try clearing a filter or search.</p></div>';
+    }
     chores.forEach(c=>{
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span></td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${relativeDate(c.lastCompleted)}</td><td>${relativeDate(nextDue(c))}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
+      const checked=selectedChoreIds.has(c.id);
+      const tags=tagMarkup(c.tags);
+      const tr=document.createElement('tr');tr.classList.toggle('selected-row',checked);
+      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${relativeDate(c.lastCompleted)}</td><td>${relativeDate(nextDue(c))}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
+      tr.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       tr.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id));
       tr.querySelector('.delete-chore').addEventListener('click',()=>deleteChore(c.id)); body.appendChild(tr);
-      const card=document.createElement('div'); card.className='chore-mobile-card';
-      card.innerHTML=`<div class="chore-mobile-top"><div><div class="chore-mobile-title">${CATEGORY_EMOJI[c.category]} ${esc(c.name)}</div><div class="chore-mobile-meta"><span class="badge">${esc(c.category)}</span><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></div></div><button class="text-btn edit-chore">Edit</button></div><div class="chore-mobile-dates"><span>Last: ${relativeDate(c.lastCompleted)}</span><span>Next: ${relativeDate(nextDue(c))}</span></div>`;
+
+      const card=document.createElement('div'); card.className='chore-mobile-card'+(checked?' selected-row':'');
+      card.innerHTML=`<div class="chore-mobile-top"><div class="mobile-select-title"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /><div><div class="chore-mobile-title">${CATEGORY_EMOJI[c.category]} ${esc(c.name)}</div><div class="chore-mobile-meta"><span class="badge">${esc(c.category)}</span><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></div>${tags?`<div class="tag-row">${tags}</div>`:''}</div></div><button class="text-btn edit-chore">Edit</button></div><div class="chore-mobile-dates"><span>Last: ${relativeDate(c.lastCompleted)}</span><span>Next: ${relativeDate(nextDue(c))}</span></div>`;
+      card.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       card.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id)); mobile.appendChild(card);
     });
+    updateSelectionUI(chores);
+  }
+
+  function openBatchEdit(){
+    if(!selectedChoreIds.size) return;
+    const category=document.getElementById('batchCategory');
+    category.innerHTML='<option value="">No change</option>'+CATEGORIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
+    document.getElementById('batchTagsLabel').classList.add('hidden');
+    document.getElementById('batchEditSummary').textContent=`Editing ${selectedChoreIds.size} selected chore${selectedChoreIds.size===1?'':'s'}. Only chosen fields will change.`;
+    document.getElementById('batchEditDialog').showModal();
+  }
+
+  function applyBatchEdit(){
+    const ids=new Set(selectedChoreIds);if(!ids.size)return;
+    const category=document.getElementById('batchCategory').value;
+    const importance=document.getElementById('batchImportance').value;
+    const tagMode=document.getElementById('batchTagMode').value;
+    const tags=normalizeTags(document.getElementById('batchTags').value);
+    if(!category&&!importance&&tagMode==='none'){toast('Choose something to change');return;}
+    state.chores.forEach(c=>{
+      if(!ids.has(c.id))return;
+      if(category)c.category=category;
+      if(importance)c.importance=importance;
+      const current=normalizeTags(c.tags);
+      if(tagMode==='replace')c.tags=tags;
+      if(tagMode==='clear')c.tags=[];
+      if(tagMode==='add')c.tags=normalizeTags([...current,...tags]);
+      if(tagMode==='remove'){const remove=new Set(tags.map(tagKey));c.tags=current.filter(t=>!remove.has(tagKey(t)));}
+      state.instances.filter(i=>i.choreId===c.id&&!i.completed).forEach(i=>{i.category=c.category;i.importance=c.importance;});
+    });
+    const count=ids.size;selectedChoreIds.clear();
+    saveState(`${count} chore${count===1?'':'s'} updated`);document.getElementById('batchEditDialog').close();renderAll();
+  }
+
+  function batchDeleteSelected(){
+    const ids=new Set(selectedChoreIds);const count=ids.size;if(!count)return;
+    if(!confirm(`Delete ${count} selected chore${count===1?'':'s'}? Their completion history will stay in History.`))return;
+    state.chores=state.chores.filter(c=>!ids.has(c.id));
+    state.instances=state.instances.filter(i=>!ids.has(i.choreId)||i.completed);
+    selectedChoreIds.clear();saveState(`${count} chore${count===1?'':'s'} deleted`);renderAll();
   }
 
   function renderHistory(){
@@ -384,6 +668,11 @@
     document.getElementById('graceEssential').value=state.settings.grace.essential;document.getElementById('graceRegular').value=state.settings.grace.regular;document.getElementById('graceLow').value=state.settings.grace.low;
     document.getElementById('supabaseUrl').value=state.settings.supabaseUrl||'';document.getElementById('supabaseKey').value=state.settings.supabaseKey||'';document.getElementById('syncId').value=state.settings.syncId||'mak-household';
     document.getElementById('syncDot').classList.toggle('connected',!!(state.settings.supabaseUrl&&state.settings.supabaseKey));
+    const defaultStatus=document.getElementById('customDefaultStatus');
+    if(defaultStatus){
+      if(state.customDefault?.savedAt){const d=new Date(state.customDefault.savedAt);defaultStatus.textContent=`Custom default saved ${d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})} • ${state.customDefault.chores.length} chores`;}
+      else defaultStatus.textContent='Using the built-in chore list as the reset default.';
+    }
   }
 
   function renderPeopleSelects(){
@@ -395,33 +684,93 @@
     ['choreCategory','oneOffCategory'].forEach(id=>{const el=document.getElementById(id);if(el&&!el.options.length)el.innerHTML=catOpts;});
   }
 
+  function setRecurrenceFields(type){
+    const chosen=type||document.getElementById('recurrenceType').value||'interval';
+    ['intervalRecurrenceFields','weeklyRecurrenceFields','monthlyDayRecurrenceFields','monthlyWeekdayRecurrenceFields'].forEach(id=>document.getElementById(id)?.classList.add('hidden'));
+    const map={interval:'intervalRecurrenceFields',weekly:'weeklyRecurrenceFields','monthly-day':'monthlyDayRecurrenceFields','monthly-weekday':'monthlyWeekdayRecurrenceFields'};
+    document.getElementById(map[chosen])?.classList.remove('hidden');
+    const behavior=document.getElementById('scheduleBehavior');
+    if(behavior){
+      if(chosen!=='interval'){if(!behavior.disabled)behavior.dataset.intervalValue=behavior.value||'completion';behavior.value='fixed';behavior.disabled=true;}
+      else {behavior.disabled=false;behavior.value=behavior.dataset.intervalValue||behavior.value||'completion';}
+    }
+    const help=document.getElementById('scheduleBehaviorHelp');
+    if(help)help.textContent=chosen==='interval'?'Choose whether the interval restarts when you complete it.':'Calendar-based routines stay anchored to the selected weekday/date.';
+  }
+
   function openChore(id=null){
     const d=document.getElementById('choreDialog'), c=id?choreById(id):null;
     document.getElementById('choreModalKicker').textContent=c?'EDIT ROUTINE':'NEW ROUTINE';document.getElementById('choreModalTitle').textContent=c?'Edit chore':'Add chore';
     document.getElementById('choreId').value=c?.id||'';document.getElementById('choreName').value=c?.name||'';document.getElementById('choreCategory').value=c?.category||'Cleaning';document.getElementById('choreAssignee').value=normalizeAssignee(c?.assignee||'either');
-    document.getElementById('recurrenceValue').value=c?.recurrenceValue||7;document.getElementById('recurrenceUnit').value=c?.recurrenceUnit||'days';document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreGrace').value=c?.graceOverride??'';document.getElementById('scheduleBehavior').value=c?.scheduleBehavior||'completion';document.getElementById('lastCompleted').value=c?.lastCompleted||'';document.getElementById('choreAreas').value=c?.areas||''; d.showModal();
+    const type=c?.recurrenceType||'interval';document.getElementById('recurrenceType').value=type;
+    document.getElementById('recurrenceValue').value=c?.recurrenceValue||7;document.getElementById('recurrenceUnit').value=c?.recurrenceUnit||'days';
+    document.getElementById('weeklyInterval').value=type==='weekly'?(c?.recurrenceValue||1):1;document.getElementById('weeklyDay').value=String(c?.weekday??0);
+    document.getElementById('monthlyDayInterval').value=type==='monthly-day'?(c?.recurrenceValue||1):1;document.getElementById('monthDay').value=c?.monthDay||1;
+    document.getElementById('monthlyWeekdayInterval').value=type==='monthly-weekday'?(c?.recurrenceValue||1):1;document.getElementById('monthOrdinal').value=String(c?.monthOrdinal??'1');document.getElementById('monthWeekday').value=String(c?.monthWeekday??0);
+    document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreGrace').value=c?.graceOverride??'';const behavior=document.getElementById('scheduleBehavior');behavior.value=type==='interval'?(c?.scheduleBehavior||'completion'):'fixed';behavior.dataset.intervalValue=type==='interval'?(c?.scheduleBehavior||'completion'):'completion';document.getElementById('lastCompleted').value=c?.lastCompleted||'';
+    const startDate=c?.startDate||toISO(today());document.getElementById('startDate').value=startDate;
+    const nextInput=document.getElementById('nextDueDate');const shownNext=c?nextDue(c):startDate;nextInput.value=shownNext;nextInput.dataset.natural=c?nextDue(c,true):startDate;nextInput.dataset.hadOverride=c?.nextDueOverride?'1':'0';nextInput.dataset.userEdited='0';
+    document.getElementById('choreTags').value=normalizeTags(c?.tags).join(', ');document.getElementById('choreAreas').value=c?.areas||'';setRecurrenceFields(type);d.showModal();
+  }
+
+  function recurrenceDataFromForm(){
+    const type=document.getElementById('recurrenceType').value;
+    if(type==='weekly')return {recurrenceType:type,recurrenceValue:Math.max(1,Number(document.getElementById('weeklyInterval').value)||1),recurrenceUnit:'weeks',weekday:Number(document.getElementById('weeklyDay').value)};
+    if(type==='monthly-day')return {recurrenceType:type,recurrenceValue:Math.max(1,Number(document.getElementById('monthlyDayInterval').value)||1),recurrenceUnit:'months',monthDay:Math.min(31,Math.max(1,Number(document.getElementById('monthDay').value)||1))};
+    if(type==='monthly-weekday')return {recurrenceType:type,recurrenceValue:Math.max(1,Number(document.getElementById('monthlyWeekdayInterval').value)||1),recurrenceUnit:'months',monthOrdinal:document.getElementById('monthOrdinal').value,monthWeekday:Number(document.getElementById('monthWeekday').value)};
+    return {recurrenceType:'interval',recurrenceValue:Math.max(1,Number(document.getElementById('recurrenceValue').value)||1),recurrenceUnit:document.getElementById('recurrenceUnit').value};
+  }
+
+  function recurrenceDraftFromForm(existing=null){
+    return {...(existing||{}),...recurrenceDataFromForm(),startDate:document.getElementById('startDate').value||toISO(today()),lastCompleted:document.getElementById('lastCompleted').value||null,nextDueOverride:null,scheduleBehavior:document.getElementById('recurrenceType').value==='interval'?document.getElementById('scheduleBehavior').value:'fixed'};
+  }
+  function refreshNextDuePreview(force=false){
+    const input=document.getElementById('nextDueDate');if(!input)return;
+    if(!force&&(input.dataset.userEdited==='1'||input.dataset.hadOverride==='1'))return;
+    const id=document.getElementById('choreId').value;const existing=id?choreById(id):null;
+    input.value=naturalNextDue(recurrenceDraftFromForm(existing));
+  }
+
+  function scheduleSignature(c){
+    return JSON.stringify({recurrenceType:c.recurrenceType||'interval',recurrenceValue:Number(c.recurrenceValue)||1,recurrenceUnit:c.recurrenceUnit,weekday:c.weekday,monthDay:c.monthDay,monthOrdinal:String(c.monthOrdinal??''),monthWeekday:c.monthWeekday,startDate:c.startDate,nextDueOverride:c.nextDueOverride,scheduleBehavior:c.scheduleBehavior,lastCompleted:c.lastCompleted});
   }
 
   function saveChoreFromForm(){
     const id=document.getElementById('choreId').value;
     const existing=id?choreById(id):null;
+    const recurrence=recurrenceDataFromForm();
+    const startDate=document.getElementById('startDate').value||toISO(today());
+    const requestedNext=document.getElementById('nextDueDate').value||startDate;
+    const beforeSignature=existing?scheduleSignature(existing):null;
+    const submittedLastCompleted=document.getElementById('lastCompleted').value||null;
+    const submittedLastDueSatisfied=submittedLastCompleted===(existing?.lastCompleted||null)?(existing?.lastDueSatisfied||null):submittedLastCompleted;
     const data={
       id:id||uid('chore'),name:document.getElementById('choreName').value.trim(),category:document.getElementById('choreCategory').value,
-      assignee:document.getElementById('choreAssignee').value,recurrenceValue:Number(document.getElementById('recurrenceValue').value),recurrenceUnit:document.getElementById('recurrenceUnit').value,
-      importance:document.getElementById('choreImportance').value,graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:document.getElementById('scheduleBehavior').value,
-      lastCompleted:document.getElementById('lastCompleted').value||null,areas:document.getElementById('choreAreas').value.trim(),active:true,
-      anchorDate:existing?.anchorDate||document.getElementById('lastCompleted').value||toISO(today()),createdAt:existing?.createdAt||new Date().toISOString()
+      assignee:document.getElementById('choreAssignee').value,...recurrence,
+      importance:document.getElementById('choreImportance').value,graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:recurrence.recurrenceType==='interval'?document.getElementById('scheduleBehavior').value:'fixed',
+      lastCompleted:submittedLastCompleted,lastDueSatisfied:submittedLastDueSatisfied,tags:normalizeTags(document.getElementById('choreTags').value),areas:document.getElementById('choreAreas').value.trim(),active:true,
+      startDate,nextDueOverride:null,anchorDate:startDate,createdAt:existing?.createdAt||new Date().toISOString()
     };
-    if(!data.name) return;
-    if(existing) Object.assign(existing,data); else state.chores.push(data);
-    saveState(existing?'Chore updated':'Chore added');
-    document.getElementById('choreDialog').close(); renderAll();
+    if(!data.name)return;
+    // Work out the natural date using the edited recurrence. If the entered Next due differs, store a one-cycle override.
+    const natural=naturalNextDue(data);const nextInput=document.getElementById('nextDueDate');
+    const keepOrCreateOverride=nextInput.dataset.userEdited==='1'||nextInput.dataset.hadOverride==='1';
+    data.nextDueOverride=keepOrCreateOverride&&requestedNext&&requestedNext!==natural?requestedNext:null;
+    if(existing)Object.assign(existing,data);else state.chores.push(data);
+    const target=existing||data;
+    const scheduleChanged=!existing||beforeSignature!==scheduleSignature(target);
+    if(scheduleChanged){
+      state.instances=state.instances.filter(i=>i.choreId!==target.id||i.completed||i.cancelled);
+      autoPlanWeek(startOfWeek(today()),false,true);
+    }else saveState(existing?'Chore updated':'Chore added');
+    if(scheduleChanged)saveState(existing?'Chore schedule updated':'Chore added');
+    document.getElementById('choreDialog').close();renderAll();
   }
 
   function deleteChore(id){
     const c=choreById(id); if(!c) return;
     if(!confirm(`Delete “${c.name}”? Its completion history will stay in History.`)) return;
-    state.chores=state.chores.filter(x=>x.id!==id);state.instances=state.instances.filter(i=>i.choreId!==id||i.completed);
+    state.chores=state.chores.filter(x=>x.id!==id);state.instances=state.instances.filter(i=>i.choreId!==id||i.completed);selectedChoreIds.delete(id);
     saveState('Chore deleted');renderAll();
   }
 
@@ -518,6 +867,34 @@
     state=normalizeState(row.state);Object.assign(state.settings,creds);saveState('Cloud backup restored');renderAll();
   }
 
+  function defaultSnapshotFromCurrent(){
+    const chores=JSON.parse(JSON.stringify(state.chores)).map(c=>{
+      const currentNext=nextDue(c);
+      const copy=normalizeChore(c);
+      // Completion records are live history, not part of a reset template. Preserve the date currently shown as Next due.
+      copy.lastCompleted=null;copy.lastDueSatisfied=null;copy.lastCompletionChoice=null;copy.nextDueOverride=currentNext;
+      return copy;
+    });
+    return {savedAt:new Date().toISOString(),chores};
+  }
+  function setCurrentAsDefault(){
+    if(!confirm(`Use the current ${state.chores.length} chore${state.chores.length===1?'':'s'} as your reset default? Names, categories, recurrence rules, start/next dates, importance, assignments, tags and notes will be saved. Completion history and this week's plan will not.`))return;
+    state.customDefault=defaultSnapshotFromCurrent();
+    saveState('Current chore setup is now your default');renderSettings();
+  }
+  function resetToDefaults(){
+    const hasCustom=!!state.customDefault?.chores?.length;
+    const label=hasCustom?'your saved custom default':'the built-in chore list';
+    if(!confirm(`Reset chores, weekly plans, and history to ${label}? Your app and cloud settings will be kept.`))return;
+    const keptSettings=JSON.parse(JSON.stringify(state.settings||{}));
+    const keptDefault=state.customDefault?JSON.parse(JSON.stringify(state.customDefault)):null;
+    const fresh=starter();
+    if(hasCustom)fresh.chores=keptDefault.chores.map(c=>normalizeChore(JSON.parse(JSON.stringify(c))));
+    fresh.settings={...fresh.settings,...keptSettings,grace:{...fresh.settings.grace,...(keptSettings.grace||{})}};
+    fresh.customDefault=keptDefault;
+    state=fresh;selectedChoreIds.clear();saveState(hasCustom?'Saved default restored':'Built-in defaults restored');ensureAutoPlan();renderAll();
+  }
+
   function exportData(){
     const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`household-backup-${toISO(today())}.json`;a.click();URL.revokeObjectURL(url);toast('Backup exported');
   }
@@ -540,6 +917,24 @@
     document.getElementById('openPlannerBtn').addEventListener('click',()=>switchView('planner'));
     document.getElementById('addChoreBtn').addEventListener('click',()=>openChore());
     document.getElementById('choreSearch').addEventListener('input',renderChores);
+    document.getElementById('importanceFilter').addEventListener('change',e=>{choreFilters.importance=e.target.value;renderChores();});
+    document.getElementById('assigneeFilter').addEventListener('change',e=>{choreFilters.assignee=e.target.value;renderChores();});
+    document.getElementById('tagFilter').addEventListener('change',e=>{choreFilters.tag=e.target.value;renderChores();});
+    document.getElementById('dueStatusFilter').addEventListener('change',e=>{choreFilters.status=e.target.value;renderChores();});
+    document.getElementById('choreSortSelect').addEventListener('change',e=>{const [key,dir]=e.target.value.split(':');setChoreSort(key,dir);});
+    document.querySelectorAll('.sort-head').forEach(btn=>btn.addEventListener('click',()=>setChoreSort(btn.dataset.sort)));
+    document.getElementById('clearChoreFiltersBtn').addEventListener('click',()=>{activeCategory='All';choreFilters={importance:'all',assignee:'all',tag:'all',status:'all'};document.getElementById('choreSearch').value='';renderChores();});
+    document.getElementById('selectAllFilteredBtn').addEventListener('click',()=>{const shown=filteredSortedChores();const all=shown.length&&shown.every(c=>selectedChoreIds.has(c.id));shown.forEach(c=>all?selectedChoreIds.delete(c.id):selectedChoreIds.add(c.id));renderChores();});
+    document.getElementById('selectVisibleCheckbox').addEventListener('change',e=>{const shown=filteredSortedChores();shown.forEach(c=>e.target.checked?selectedChoreIds.add(c.id):selectedChoreIds.delete(c.id));renderChores();});
+    document.getElementById('clearSelectionBtn').addEventListener('click',()=>{selectedChoreIds.clear();renderChores();});
+    document.getElementById('batchEditBtn').addEventListener('click',openBatchEdit);
+    document.getElementById('batchDeleteBtn').addEventListener('click',batchDeleteSelected);
+    document.getElementById('batchTagMode').addEventListener('change',e=>{document.getElementById('batchTagsLabel').classList.toggle('hidden',e.target.value==='none'||e.target.value==='clear');});
+    document.getElementById('applyBatchEditBtn').addEventListener('click',e=>{e.preventDefault();applyBatchEdit();});
+    document.getElementById('recurrenceType').addEventListener('change',e=>{setRecurrenceFields(e.target.value);refreshNextDuePreview();});
+    ['recurrenceValue','recurrenceUnit','weeklyInterval','weeklyDay','monthlyDayInterval','monthDay','monthlyWeekdayInterval','monthOrdinal','monthWeekday','startDate','lastCompleted','scheduleBehavior'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>refreshNextDuePreview()));
+    document.getElementById('nextDueDate').addEventListener('input',e=>{e.target.dataset.userEdited='1';});
+    document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
     document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;completeInstance(id,document.getElementById('completedBy').value,choice);document.getElementById('completeDialog').close();});
     document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();moveInstance(document.getElementById('moveInstanceId').value,document.getElementById('moveDate').value,document.getElementById('moveAssignee').value);document.getElementById('moveDialog').close();});
@@ -554,7 +949,8 @@
     document.querySelectorAll('[data-energy]').forEach(b=>b.addEventListener('click',()=>{energyMode=b.dataset.energy;document.querySelectorAll('[data-energy]').forEach(x=>x.classList.toggle('active',x===b));renderEnergySuggestions();}));
     document.getElementById('saveSettingsBtn').addEventListener('click',saveSettings);document.getElementById('pushCloudBtn').addEventListener('click',pushCloud);document.getElementById('pullCloudBtn').addEventListener('click',pullCloud);
     document.getElementById('exportBtn').addEventListener('click',exportData);document.getElementById('importInput').addEventListener('change',e=>{if(e.target.files?.[0])importData(e.target.files[0]);e.target.value='';});
-    document.getElementById('resetDemoBtn').addEventListener('click',()=>{if(confirm('Reset chores, weekly plans, and history to your default chore list? Your app and cloud settings will be kept.')){const keptSettings=JSON.parse(JSON.stringify(state.settings||{}));state=starter();state.settings={...state.settings,...keptSettings,grace:{...state.settings.grace,...(keptSettings.grace||{})}};saveState('Default chores restored');ensureAutoPlan();renderAll();}});
+    document.getElementById('setDefaultBtn').addEventListener('click',setCurrentAsDefault);
+    document.getElementById('resetDemoBtn').addEventListener('click',resetToDefaults);
   }
 
   bind(); ensureAutoPlan(); renderAll();

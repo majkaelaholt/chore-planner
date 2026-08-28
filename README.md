@@ -9,7 +9,9 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
 - **Mak / Ty / Either assignments** with automatic splitting for “Either” chores. If one person did a chore last time, the app prefers the other person next time.
 - **Recurring + one-off chores** in the same weekly planner.
-- **Fixed, completion-based, or ask-each-time recurrence** behavior.
+- **Flexible recurrence**: every X days/weeks/months, a specific weekday, a specific day of the month, or patterns like the first Sunday of each month.
+- **Editable Start date + Next due date** for each recurring chore, including one-cycle next-date overrides.
+- **Fixed, completion-based, or ask-each-time recurrence** behavior for interval-based chores.
 - **Carry-forward logic** moves missed chores to today while preserving the original due date.
 - **Extra Energy mode** reveals at most three optional suggestions only when you intentionally ask for more.
 - **History** records who completed each chore and when.
@@ -41,7 +43,9 @@ This project has no build step.
 
 Every recurring chore has:
 
-- a target recurrence (for example every 7 days)
+- a recurrence rule (for example every 7 days, every Sunday, monthly on the 1st, or the 1st Sunday of the month)
+- an editable start date / schedule anchor
+- an editable next due date
 - an importance level
 - a grace window based on importance
 - a default assignee
@@ -51,9 +55,30 @@ The weekly planner will **never pull a future chore earlier than its due date ju
 
 ## Default chore library
 
-The built-in defaults are Mak + Ty's household chore list. All recurring chores default to **Either** so the weekly planner can distribute them between Mak and Ty. Resetting to defaults restores this library while preserving app settings and Supabase credentials.
+The built-in defaults are Mak + Ty's household chore list. All recurring chores default to **Either** so the weekly planner can distribute them between Mak and Ty.
+
+In **Settings → Backup & reset**, **Set current setup as default** saves the current chore configuration as the new reset baseline. It saves chore names, categories, recurrence rules, start/next dates, importance, assignments, tags, and notes; it intentionally does not save completion history or the current weekly plan. Resetting preserves app settings and Supabase credentials.
 
 The starter schedule does **not** fabricate completion history. It seeds first due dates across sensible upcoming days; once a chore is completed, its normal recurrence takes over.
+
+## v1.4
+- Added editable **Start date** and **Next due** fields to recurring chores.
+- Added calendar recurrence rules: specific weekday, day-of-month, and nth/last weekday of the month.
+- Calendar rules support intervals too, such as every 2 weeks on Sunday or every 2 months on the 1st.
+- Editing a recurrence/date removes the stale open instance for that chore and replans it from the new schedule.
+- Added **Set current setup as default** so Reset can restore the user's customized chore configuration instead of only the built-in list.
+- Custom defaults are included in JSON/Supabase state backups and survive Reset.
+- Bumped the PWA cache to `household-v1-4`.
+
+## v1.3
+- Upgraded the Chores library into a sortable, filterable management view.
+- Added filters for category, importance, default person, tag, due status, and search.
+- Added sortable table headers plus a Sort dropdown for mobile/tablet-friendly control.
+- Added multi-select with Select all shown / Clear selection.
+- Added batch editing for category, importance, and tags (add, replace, remove, or clear).
+- Added batch delete while preserving completion history.
+- Added optional comma-separated tags to individual chores and tag filtering/search.
+- Bumped the PWA cache to `household-v1-3`.
 
 ## v1.2
 - Replaced all sample chores with Mak + Ty's 23 household chores.

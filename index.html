@@ -121,13 +121,51 @@
           </div>
           <button class="primary-btn" id="addChoreBtn">＋ Add chore</button>
         </div>
-        <div class="toolbar">
+        <div class="toolbar chore-toolbar">
           <div class="segmented" id="categoryFilters"></div>
-          <label class="search-wrap"><span>⌕</span><input type="search" id="choreSearch" placeholder="Search chores" /></label>
+          <label class="search-wrap"><span>⌕</span><input type="search" id="choreSearch" placeholder="Search chores, notes, or tags" /></label>
+        </div>
+        <div class="chore-filter-row">
+          <label>Importance<select id="importanceFilter"><option value="all">All importance</option><option value="essential">Essential</option><option value="regular">Regular</option><option value="low">Low stakes</option></select></label>
+          <label>Default person<select id="assigneeFilter"><option value="all">All people</option></select></label>
+          <label>Tag<select id="tagFilter"><option value="all">All tags</option></select></label>
+          <label>Status<select id="dueStatusFilter"><option value="all">Any due status</option><option value="due">Due now / overdue</option><option value="overdue">Overdue only</option><option value="upcoming">Upcoming</option><option value="never">Never completed</option></select></label>
+          <label>Sort<select id="choreSortSelect">
+            <option value="name:asc">Name A–Z</option><option value="name:desc">Name Z–A</option>
+            <option value="nextDue:asc">Next due — soonest</option><option value="nextDue:desc">Next due — latest</option>
+            <option value="lastCompleted:desc">Last done — newest</option><option value="lastCompleted:asc">Last done — oldest / never</option>
+            <option value="recurrence:asc">Most frequent first</option><option value="recurrence:desc">Least frequent first</option>
+            <option value="importance:asc">Importance — highest first</option><option value="importance:desc">Importance — lowest first</option>
+            <option value="category:asc">Category A–Z</option><option value="category:desc">Category Z–A</option>
+            <option value="assignee:asc">Default person A–Z</option><option value="assignee:desc">Default person Z–A</option>
+          </select></label>
+          <button class="text-btn clear-filter-btn" id="clearChoreFiltersBtn">Clear filters</button>
+        </div>
+        <div class="chore-list-meta">
+          <span id="choreResultsCount">0 chores</span>
+          <button class="text-btn" id="selectAllFilteredBtn">Select all shown</button>
+        </div>
+        <div class="batch-bar hidden" id="batchBar">
+          <div><strong id="selectedChoreCount">0</strong> selected</div>
+          <div class="batch-actions">
+            <button class="secondary-btn" id="batchEditBtn">✎ Batch edit</button>
+            <button class="text-btn danger" id="batchDeleteBtn">Delete selected</button>
+            <button class="text-btn" id="clearSelectionBtn">Clear</button>
+          </div>
         </div>
         <div class="chore-table-wrap">
           <table class="chore-table">
-            <thead><tr><th>Chore</th><th>Category</th><th>Rhythm</th><th>Importance</th><th>Last done</th><th>Next due</th><th>Default</th><th></th></tr></thead>
+            <thead><tr>
+              <th class="select-col"><input type="checkbox" id="selectVisibleCheckbox" aria-label="Select all shown chores" /></th>
+              <th><button class="sort-head" data-sort="name">Chore <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="category">Category <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="recurrence">Rhythm <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="importance">Importance <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="lastCompleted">Last done <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="nextDue">Next due <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="assignee">Default <span class="sort-indicator"></span></button></th>
+              <th></th>
+            </tr></thead>
             <tbody id="choreTableBody"></tbody>
           </table>
         </div>
@@ -189,11 +227,14 @@
           </section>
           <section class="panel span-two danger-lite">
             <div class="panel-head"><div><p class="section-kicker">DATA</p><h2>Backup & reset</h2></div></div>
+            <p class="setting-help">Save your finished chore setup as the baseline that Reset restores. This includes chore names, categories, recurrence rules, start/next dates, importance, assignments, tags and notes — not completion history or the current weekly plan.</p>
             <div class="button-row">
+              <button class="secondary-btn" id="setDefaultBtn">★ Set current setup as default</button>
               <button class="secondary-btn" id="exportBtn">Export JSON backup</button>
               <label class="secondary-btn file-btn">Import JSON<input id="importInput" type="file" accept="application/json" /></label>
               <button class="text-btn danger" id="resetDemoBtn">Reset to default chores</button>
             </div>
+            <p class="tiny-text" id="customDefaultStatus"></p>
           </section>
         </div>
       </section>
@@ -215,15 +256,47 @@
         <label class="span-two">Chore name<input id="choreName" required maxlength="80" placeholder="e.g. Wipe surfaces" /></label>
         <label>Category<select id="choreCategory"></select></label>
         <label>Default person<select id="choreAssignee"></select></label>
-        <label>Repeat every<input id="recurrenceValue" type="number" min="1" max="365" value="7" required /></label>
-        <label>Unit<select id="recurrenceUnit"><option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option></select></label>
+        <label class="span-two">Recurrence style<select id="recurrenceType"><option value="interval">Every X days / weeks / months</option><option value="weekly">Specific weekday</option><option value="monthly-day">Specific day of the month</option><option value="monthly-weekday">Specific weekday of the month</option></select></label>
+        <div id="intervalRecurrenceFields" class="form-subgrid span-two">
+          <label>Repeat every<input id="recurrenceValue" type="number" min="1" max="365" value="7" required /></label>
+          <label>Unit<select id="recurrenceUnit"><option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option></select></label>
+        </div>
+        <div id="weeklyRecurrenceFields" class="form-subgrid span-two hidden">
+          <label>Every <span class="optional">weeks</span><input id="weeklyInterval" type="number" min="1" max="52" value="1" /></label>
+          <label>On<select id="weeklyDay"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+        </div>
+        <div id="monthlyDayRecurrenceFields" class="form-subgrid span-two hidden">
+          <label>Every <span class="optional">months</span><input id="monthlyDayInterval" type="number" min="1" max="24" value="1" /></label>
+          <label>On day<input id="monthDay" type="number" min="1" max="31" value="1" /></label>
+        </div>
+        <div id="monthlyWeekdayRecurrenceFields" class="form-subgrid span-two hidden">
+          <label>Every <span class="optional">months</span><input id="monthlyWeekdayInterval" type="number" min="1" max="24" value="1" /></label>
+          <label>Week<select id="monthOrdinal"><option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option><option value="4">4th</option><option value="5">5th</option><option value="-1">Last</option></select></label>
+          <label>Weekday<select id="monthWeekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+        </div>
+        <label>Start date <span class="optional">first due / schedule anchor</span><input id="startDate" type="date" required /></label>
+        <label>Next due <span class="optional">editable</span><span class="date-with-action"><input id="nextDueDate" type="date" required /><button type="button" class="mini-link" id="clearNextDueBtn">Use schedule</button></span></label>
         <label>Importance<select id="choreImportance"><option value="essential">Essential</option><option value="regular" selected>Regular</option><option value="low">Low stakes</option></select></label>
         <label>Grace override<input id="choreGrace" type="number" min="0" max="30" placeholder="Use default" /></label>
-        <label>Schedule behavior<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select></label>
+        <label>Schedule behavior<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select><span class="field-help" id="scheduleBehaviorHelp">Choose whether the interval restarts when you complete it.</span></label>
         <label>Last completed<input id="lastCompleted" type="date" /></label>
+        <label class="span-two">Tags <span class="optional">optional • comma separated</span><input id="choreTags" maxlength="160" placeholder="e.g. quick, office, pair together" /></label>
         <label class="span-two">Areas / notes <span class="optional">optional</span><input id="choreAreas" maxlength="120" placeholder="e.g. bedroom, office, living room" /></label>
       </div>
       <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="saveChoreBtn" value="default">Save chore</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="batchEditDialog" class="modal small-modal">
+    <form method="dialog" id="batchEditForm">
+      <div class="modal-head"><div><p class="section-kicker">BATCH EDIT</p><h2>Edit selected chores</h2><p class="modal-copy" id="batchEditSummary">Apply only the fields you choose.</p></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <div class="form-grid">
+        <label>Category<select id="batchCategory"><option value="">No change</option></select></label>
+        <label>Importance<select id="batchImportance"><option value="">No change</option><option value="essential">Essential</option><option value="regular">Regular</option><option value="low">Low stakes</option></select></label>
+        <label>Tags action<select id="batchTagMode"><option value="none">No change</option><option value="add">Add tags</option><option value="replace">Replace all tags</option><option value="remove">Remove tags</option><option value="clear">Clear all tags</option></select></label>
+        <label id="batchTagsLabel">Tags <span class="optional">comma separated</span><input id="batchTags" maxlength="160" placeholder="e.g. quick, office" /></label>
+      </div>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="applyBatchEditBtn" value="default">Apply changes</button></div>
     </form>
   </dialog>
 
