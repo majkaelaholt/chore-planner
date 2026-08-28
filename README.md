@@ -2,6 +2,16 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.7
+
+- 2-week and month forecasts now project the **full future rhythm** for completion-based chores, not just the next known due date.
+- Forecast chains assume each projected occurrence is completed on its due date.
+- Completing a completion-based chore early or late automatically shifts all later forecast occurrences from the real completion date.
+- Fixed/calendar-based routines remain anchored to their schedule.
+- One-cycle Next due overrides are respected while future fixed-interval forecasts return to the underlying anchor.
+- Updated the planner explanation so forecast cards are clearly predictions, not commitments.
+- Bumped the PWA cache to `household-v1-7`.
+
 ## v1.6
 
 - Replaced the odd outline-house Overview glyph with a normal 🏡 icon.
@@ -10,7 +20,7 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 - 2-week and month views provide a compact calendar forecast for seeing how occasional chores line up ahead of time.
 - Zoomed-out views distinguish **solid planned chores** from **outlined due-date forecasts**.
 - Tapping a day in 2-week/month view jumps directly into that week for detailed planning.
-- Completion-based routines only forecast their next known due date; fixed/calendar routines can project later exact occurrences without pretending future completion dates are known.
+- Zoomed-out forecasts project later completion-based occurrences by assuming each projected chore is completed on its due date; real completion dates automatically re-anchor later forecasts.
 - Bumped the PWA cache to `household-v1-6`.
 
 ## v1.5

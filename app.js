@@ -17,7 +17,7 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 1.6,
+    version: 1.7,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -98,7 +98,7 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 1.6,
+      version: 1.7,
       chores: Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores,
       instances: Array.isArray(s.instances) ? s.instances : [],
       history: Array.isArray(s.history) ? s.history : [],
@@ -571,27 +571,43 @@
     return {start,end:addDays(start,plannerViewMode==='fortnight'?13:6),gridStart:start,gridEnd:addDays(start,plannerViewMode==='fortnight'?13:6)};
   }
 
+  function nextFixedIntervalAfter(chore,satisfiedIso){
+    // Fixed interval routines stay anchored to Start date even if the current
+    // occurrence has a one-cycle Next due override.
+    let due=parseISO(chore.startDate||chore.anchorDate||satisfiedIso);
+    const satisfied=parseISO(satisfiedIso);
+    let guard=0;
+    while(due<=satisfied && guard++<4000) due=addRecurrence(due,chore);
+    return toISO(due);
+  }
+
   function advanceProjectedDue(chore,dueIso){
     const type=chore.recurrenceType||'interval';
-    if(type==='interval') return toISO(addRecurrence(parseISO(dueIso),chore));
-    return toISO(firstCalendarOccurrenceOnOrAfter(chore,addDays(parseISO(dueIso),1)));
+    if(type!=='interval') return toISO(firstCalendarOccurrenceOnOrAfter(chore,addDays(parseISO(dueIso),1)));
+    const effectiveBehavior=chore.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore.scheduleBehavior;
+    if(effectiveBehavior==='fixed') return nextFixedIntervalAfter(chore,dueIso);
+    // Completion-based forecast assumption: each projected occurrence is done
+    // on its due date. A real early/late completion changes nextDue(), so the
+    // entire future forecast automatically re-anchors on the next render.
+    return toISO(addRecurrence(parseISO(dueIso),chore));
   }
 
   function projectedDueDates(chore,startIso,endIso){
     if(chore.active===false) return [];
     let due=nextDue(chore);
     if(!due) return [];
-    const type=chore.recurrenceType||'interval';
-    const effectiveBehavior=chore.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore.scheduleBehavior;
-    const canProjectRepeats=type!=='interval'||effectiveBehavior==='fixed';
     const out=[];
     let guard=0;
-    if(chore.nextDueOverride && due<startIso) return out;
-    while(due<startIso && canProjectRepeats && guard++<400) due=advanceProjectedDue(chore,due);
-    if(due<startIso) return out;
-    while(due<=endIso && guard++<400){
+    // Project the whole visible rhythm, including completion-based intervals.
+    // These are forecasts only: each step assumes the prior projected chore is
+    // completed on its due date. Real completion dates replace that assumption.
+    while(due<startIso && guard++<4000){
+      const next=advanceProjectedDue(chore,due);
+      if(!next||next<=due) return out;
+      due=next;
+    }
+    while(due<=endIso && guard++<4000){
       out.push(due);
-      if(chore.nextDueOverride || !canProjectRepeats) break;
       const next=advanceProjectedDue(chore,due);
       if(!next||next<=due) break;
       due=next;
@@ -702,7 +718,7 @@
       return;
     }
     legend.classList.remove('hidden');generate.classList.add('hidden');rebalance.classList.add('hidden');
-    note.innerHTML='<strong>Zoomed-out view:</strong> solid chores are already planned; outlined chores are due-date forecasts. Tap any day to open that week for detailed planning. Completion-based routines only forecast their next known due date.';
+    note.innerHTML='<strong>Zoomed-out view:</strong> solid chores are already planned; outlined chores are forecasts. Future occurrences assume each chore is completed on its projected due date; completion-based forecasts automatically shift when you actually finish early or late. Tap any day to open that week for detailed planning.';
     if(plannerViewMode==='fortnight'){
       title.textContent='2-Week Planner';eyebrow.textContent='LOOK AHEAD';subtitle.textContent='See how the next two weeks line up without turning future chores into today’s obligations.';
       label.textContent=`${formatShort(period.start)} – ${formatShort(period.end)}`;
