@@ -465,15 +465,28 @@
   }
   async function pushCloud(){
     saveSettings();const sb=await getSupabase();if(!sb)return;
+    const syncId=(state.settings.syncId||'mak-household').trim();
     const payload=JSON.parse(JSON.stringify(state)); payload.settings.supabaseKey='';
-    const {error}=await sb.from('household_state').upsert({id:state.settings.syncId,state:payload,updated_at:new Date().toISOString()},{onConflict:'id'});
-    if(error){console.error(error);toast(`Cloud backup failed: ${error.message}`);}else toast('Cloud backup saved');
+    const {data,error}=await sb.from('household_state')
+      .upsert({id:syncId,state:payload,updated_at:new Date().toISOString()},{onConflict:'id'})
+      .select('id,updated_at')
+      .maybeSingle();
+    if(error){console.error(error);toast(`Cloud backup failed: ${error.message}`);return;}
+    if(!data?.id){toast(`Cloud backup could not be verified for “${syncId}”`);return;}
+    toast('Cloud backup saved');
   }
   async function pullCloud(){
     saveSettings();const sb=await getSupabase();if(!sb)return;
-    const {data,error}=await sb.from('household_state').select('state').eq('id',state.settings.syncId).single();
+    const syncId=(state.settings.syncId||'mak-household').trim();
+    const {data,error}=await sb.from('household_state')
+      .select('state,updated_at')
+      .eq('id',syncId)
+      .limit(1);
     if(error){console.error(error);toast(`Cloud restore failed: ${error.message}`);return;}
-    if(data?.state){const creds={supabaseUrl:state.settings.supabaseUrl,supabaseKey:state.settings.supabaseKey,syncId:state.settings.syncId};state=normalizeState(data.state);Object.assign(state.settings,creds);saveState('Cloud backup restored');renderAll();}
+    const row=Array.isArray(data)?data[0]:data;
+    if(!row?.state){toast(`No cloud backup found for “${syncId}”`);return;}
+    const creds={supabaseUrl:state.settings.supabaseUrl,supabaseKey:state.settings.supabaseKey,syncId};
+    state=normalizeState(row.state);Object.assign(state.settings,creds);saveState('Cloud backup restored');renderAll();
   }
 
   function exportData(){

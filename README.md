@@ -52,3 +52,10 @@ The weekly planner will **never pull a future chore earlier than its due date ju
 ## Important note about auto-planning
 
 The supplied starter data is only sample household data. Edit/delete it and build your real chore library from the Chores page.
+
+
+## v1.1
+- Hardened Supabase push/pull backup handling.
+- Push now verifies the backup row before reporting success.
+- Pull handles a missing sync ID gracefully instead of using a strict single-row coercion.
+- Bumped the PWA cache so GitHub Pages/mobile installs receive the updated JavaScript.
