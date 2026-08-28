@@ -2,6 +2,14 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.9
+
+- Planner weeks now run **Sunday through Saturday** in Week, 2 Weeks, and Month views.
+- Planner chore cards are softly shaded by importance: Essential, Regular, and Low stakes.
+- Scheduled vs forecast styling is still preserved, so importance color does not hide whether a chore is actually planned.
+- Added an importance-color key to the Planner legend.
+- Bumped the PWA cache to `household-v1-9`.
+
 ## v1.8
 
 - Reworked Planner into one **continuous schedule** shared by Week / 2 Weeks / Month.

@@ -167,7 +167,7 @@
   function addDays(d,n) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
   function daysBetween(a,b) { return Math.round((parseDateish(b)-parseDateish(a))/dayMs); }
   function parseDateish(x) { if (x instanceof Date) { const d=new Date(x); d.setHours(0,0,0,0); return d; } return parseISO(x); }
-  function startOfWeek(d) { const x=new Date(d); x.setHours(0,0,0,0); const day=x.getDay(); const diff=(day+6)%7; return addDays(x,-diff); }
+  function startOfWeek(d) { const x=new Date(d); x.setHours(0,0,0,0); return addDays(x,-x.getDay()); }
   function endOfWeek(d) { return addDays(startOfWeek(d),6); }
   function sameDate(a,b) { return toISO(parseDateish(a))===toISO(parseDateish(b)); }
   function formatShort(d) { return parseDateish(d).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
@@ -704,12 +704,12 @@
     const btn=document.createElement('button');
     btn.type='button';
     if(item.preview){
-      btn.className='calendar-task forecast';
+      btn.className=`calendar-task forecast importance-${item.importance||'regular'}`;
       btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">due</span>`;
       btn.title=`${item.name} • due ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
       btn.addEventListener('click',e=>{e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
     } else {
-      btn.className='calendar-task planned'+(item.completed?' done':'');
+      btn.className=`calendar-task planned importance-${item.importance||'regular'}${item.completed?' done':''}`;
       btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(item.completed?personLabel(item.completedBy):personLabel(item.assignedTo))}</span>`;
       btn.title=item.completed?`${item.name} • completed by ${personLabel(item.completedBy)}`:`${item.name} • planned for ${formatShort(item.scheduledDate)}`;
       btn.addEventListener('click',e=>{e.stopPropagation();item.completed?toast(`Completed by ${personLabel(item.completedBy)}`):openMove(item.id);});
@@ -723,7 +723,7 @@
     board.innerHTML='';
     const gridStart=period.gridStart,gridEnd=period.gridEnd;
     const forecast=plannerForecastMap(toISO(gridStart),toISO(gridEnd));
-    const weekdays=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const weekdays=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     weekdays.forEach(day=>{const h=document.createElement('div');h.className='calendar-weekday';h.textContent=day;board.appendChild(h);});
     let date=new Date(gridStart);
     while(date<=gridEnd){
@@ -810,7 +810,7 @@
   }
 
   function plannerCard(i){
-    const el=document.createElement('article'); el.className='planner-card'+(i.completed?' done':''); el.draggable=!i.completed; el.dataset.id=i.id;
+    const el=document.createElement('article'); el.className=`planner-card importance-${i.importance||'regular'}${i.completed?' done':''}`; el.draggable=!i.completed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
     el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.completed?personLabel(i.completedBy):personLabel(i.assignedTo))}</span><button class="planner-card-menu" aria-label="Move or edit">•••</button></div>${(!i.completed&&i.originalDue&&i.originalDue!==i.scheduledDate)?`<div class="original-due">${overdue?'Overdue • ':''}originally ${formatShort(i.originalDue)}</div>`:''}`;
     el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',i.id));
@@ -822,7 +822,7 @@
   function plannerForecastCard(item){
     const chore=choreById(item.choreId);
     const el=document.createElement('article');
-    el.className='planner-card forecast-card';
+    el.className=`planner-card forecast-card importance-${item.importance||'regular'}`;
     el.draggable=true;
     el.dataset.choreId=item.choreId;
     el.dataset.dueDate=item.dueDate;

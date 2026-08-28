@@ -392,3 +392,25 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 }
 .forecast-label { text-transform: uppercase; letter-spacing: .05em; }
 .forecast-due { margin-top: 5px; }
+
+/* v1.9 Sunday-first calendar + importance shading */
+.legend-essential { background: #f2ded9; border: 1px solid #dec0b9; }
+.legend-regular { background: #eee8da; border: 1px solid #d7ccb4; }
+.legend-low { background: var(--accent-soft); border: 1px solid #cbd5c3; }
+
+/* Detailed Week cards */
+.planner-card.importance-essential { background: #f7e7e3; border-color: #e2c4bd; }
+.planner-card.importance-regular { background: #f4eee2; border-color: #ddd1ba; }
+.planner-card.importance-low { background: #edf2e9; border-color: #ced8c7; }
+.planner-card.forecast-card.importance-essential { background: rgba(242,222,217,.48); border-color: #cfa99f; }
+.planner-card.forecast-card.importance-regular { background: rgba(238,232,218,.48); border-color: #bdb198; }
+.planner-card.forecast-card.importance-low { background: rgba(230,236,223,.50); border-color: #aebba5; }
+
+/* Compact 2-week / Month cards */
+.calendar-task.planned.importance-essential { background: #f7e7e3; border-color: #e2c4bd; }
+.calendar-task.planned.importance-regular { background: #f4eee2; border-color: #ddd1ba; }
+.calendar-task.planned.importance-low { background: #edf2e9; border-color: #ced8c7; }
+.calendar-task.forecast.importance-essential { background: rgba(242,222,217,.42); border-color: #cfa99f; }
+.calendar-task.forecast.importance-regular { background: rgba(238,232,218,.42); border-color: #bdb198; }
+.calendar-task.forecast.importance-low { background: rgba(230,236,223,.44); border-color: #aebba5; }
+
