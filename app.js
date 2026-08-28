@@ -17,7 +17,7 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 1.9,
+    version: 2.0,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -99,7 +99,7 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 1.9,
+      version: 2.0,
       chores,
       instances: normalizeInstancesForVersion(s.instances,s.version,chores),
       history: Array.isArray(s.history) ? s.history : [],
@@ -108,7 +108,16 @@
   }
 
   function normalizeInstancesForVersion(instances,sourceVersion=0,chores=[]){
-    let list=Array.isArray(instances)?instances.map(i=>({...i})):[];
+    let list=Array.isArray(instances)?instances.map(i=>({
+      ...i,
+      pinned: Boolean(i.pinned),
+      manualPlan: Boolean(i.manualPlan||i.snoozed||i.plannedFromForecast),
+      // v2 keeps the intended plan date intact when a chore becomes late.
+      // Older versions sometimes carried a missed chore forward by overwriting
+      // scheduledDate. We cannot always reconstruct that older plan, so preserve
+      // the best date available and stop mutating it going forward.
+      plannedDate: i.plannedDate||i.scheduledDate||i.originalDue||null
+    })):[];
     if(Number(sourceVersion)<1.8){
       const currentWeekEnd=toISO(endOfWeek(today()));
       // Before v1.8, pressing Auto-plan created future-week instances that were
@@ -121,6 +130,16 @@
       });
     }
     if(Number(sourceVersion)<1.9) list=repairSkippedFirstCalendarOccurrences(list,chores);
+    if(Number(sourceVersion)<2){
+      list=list.map(i=>({
+        ...i,
+        // scheduledDate remains the canonical plan date for compatibility;
+        // plannedDate is an explicit alias used by the v2 scheduling model.
+        plannedDate:i.scheduledDate||i.plannedDate||i.originalDue||null,
+        pinned:Boolean(i.pinned),
+        manualPlan:Boolean(i.manualPlan||i.snoozed||i.plannedFromForecast)
+      }));
+    }
     return list;
   }
 
@@ -342,6 +361,10 @@
   function normalizeAssignee(key) {
     if (key==='mak') return 'person1'; if (key==='ty') return 'person2'; return key || 'either';
   }
+  function assigneeClass(key){
+    const normalized=normalizeAssignee(key);
+    return normalized==='person1'?'assignee-person1':normalized==='person2'?'assignee-person2':'assignee-either';
+  }
 
   function completionHistoryFor(choreId) { return state.history.filter(h=>h.choreId===choreId).sort((a,b)=>b.completedAt.localeCompare(a.completedAt)); }
   function chooseAssignee(chore, weekStart) {
@@ -351,12 +374,31 @@
     if (hist.length && ['person1','person2'].includes(hist[0].completedBy)) return hist[0].completedBy==='person1' ? 'person2' : 'person1';
     const ws=toISO(weekStart), we=toISO(endOfWeek(weekStart));
     const counts={person1:0,person2:0};
-    state.instances.filter(i=>i.scheduledDate>=ws&&i.scheduledDate<=we&&!i.completed).forEach(i=>{ if(counts[i.assignedTo]!==undefined)counts[i.assignedTo]++; });
+    state.instances.filter(i=>planDateOf(i)>=ws&&planDateOf(i)<=we&&!i.completed).forEach(i=>{ if(counts[i.assignedTo]!==undefined)counts[i.assignedTo]++; });
     return counts.person1<=counts.person2?'person1':'person2';
   }
 
   function getOpenRecurringInstance(choreId) {
     return state.instances.find(i=>i.choreId===choreId && !i.completed && !i.cancelled);
+  }
+
+  function planDateOf(i){
+    return i?.plannedDate||i?.scheduledDate||i?.originalDue||null;
+  }
+
+  function setPlanDate(i,date){
+    if(!i)return;
+    i.scheduledDate=date;
+    i.plannedDate=date;
+  }
+
+  function calendarDateForInstance(i){
+    if(i?.completed && i.completedAt) return String(i.completedAt).slice(0,10);
+    return planDateOf(i);
+  }
+
+  function effectiveScheduleBehavior(chore){
+    return chore?.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore?.scheduleBehavior;
   }
 
   function ensureDueForecastsPlanned() {
@@ -365,18 +407,18 @@
     state.chores.filter(c=>c.active!==false).forEach(chore=>{
       const due=nextDue(chore);
       if(!due||due>t)return;
-      // If this occurrence was already explicitly planned/moved, leave that plan
-      // alone. Otherwise, the forecast becomes a real planner item once its due
-      // day arrives (or the next time the app opens after that day).
+      // A forecast becomes a real plan when its due day arrives. Keep the plan
+      // on the actual due date even if the app is opened later; Today can surface
+      // missed plans without rewriting their intended date.
       const represented=state.instances.some(i=>
-        i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||i.scheduledDate)===due
+        i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))===due
       );
       if(represented)return;
       state.instances.push({
         id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,
-        originalDue:due,scheduledDate:t,assignedTo:chooseAssignee(chore,startOfWeek(today())),
-        completed:false,completedAt:null,oneOff:false,snoozed:false,plannedFromForecast:true,
-        autoPromotedOnDue:true,carriedForward:due<t,createdAt:new Date().toISOString()
+        originalDue:due,scheduledDate:due,plannedDate:due,assignedTo:chooseAssignee(chore,startOfWeek(parseISO(due))),
+        completed:false,completedAt:null,oneOff:false,snoozed:false,plannedFromForecast:true,manualPlan:false,pinned:false,
+        autoPromotedOnDue:true,createdAt:new Date().toISOString()
       });
       changed=true;
     });
@@ -384,28 +426,13 @@
   }
 
   function syncPlannerForToday() {
-    carryForwardMissed();
     ensureDueForecastsPlanned();
-  }
-
-  function carryForwardMissed() {
-    const t=toISO(today());
-    let changed=false;
-    state.instances.filter(i=>!i.completed&&!i.cancelled&&i.scheduledDate<t).forEach(i=>{
-      const chore=choreById(i.choreId);
-      if (!i.originalDue) i.originalDue=i.scheduledDate;
-      // Carry to today; grace/overdue state is computed from original due.
-      i.scheduledDate=t;
-      i.carriedForward=true;
-      changed=true;
-    });
-    if(changed) saveState('');
   }
 
   function statusForInstance(i) {
     const t=toISO(today());
     if(i.completed) return 'done';
-    if(!i.originalDue) return i.scheduledDate<t?'overdue':'planned';
+    if(!i.originalDue) return planDateOf(i)<t?'overdue':'planned';
     const chore=choreById(i.choreId);
     const grace=chore?getGrace(chore):2;
     const graceEnd=toISO(addDays(parseISO(i.originalDue),grace));
@@ -414,45 +441,92 @@
     return 'due';
   }
 
-  function shiftFuturePlansAfterCompletion(chore,completedInstance,actualDate,behavior){
-    if(!chore||!completedInstance||behavior==='fixed'||(chore.recurrenceType||'interval')!=='interval')return;
-    const delta=daysBetween(completedInstance.scheduledDate,actualDate);
-    if(!delta)return;
-    const completedDate=completedInstance.scheduledDate;
-    state.instances.filter(i=>i.id!==completedInstance.id&&i.choreId===chore.id&&!i.completed&&!i.cancelled&&i.scheduledDate>completedDate).forEach(i=>{
-      i.scheduledDate=toISO(addDays(parseISO(i.scheduledDate),delta));
-      if(i.originalDue)i.originalDue=toISO(addDays(parseISO(i.originalDue),delta));
-      i.rebasedFromCompletion=true;
+  // A completion-based routine treats the current planned date as the best
+  // assumption for when the chore will happen. Reflow later plans sequentially
+  // so each keeps its relative "do it X days early/late" preference. A pinned
+  // occurrence keeps its exact calendar date and then becomes the assumption
+  // that anchors the occurrences after it.
+  function rebaseFuturePlansAfterAssumptionChange(chore,currentInstance,oldAssumedDate,newAssumedDate,reason='plan'){
+    if(!chore||!currentInstance||!oldAssumedDate||!newAssumedDate)return;
+    if((chore.recurrenceType||'interval')!=='interval')return;
+    if(effectiveScheduleBehavior(chore)==='fixed'||oldAssumedDate===newAssumedDate)return;
+    const currentDue=currentInstance.originalDue||oldAssumedDate;
+    const future=state.instances
+      .filter(i=>i.id!==currentInstance.id&&i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))>currentDue)
+      .sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b)))
+      .map(i=>({
+        instance:i,
+        oldDue:i.originalDue||planDateOf(i),
+        oldPlan:planDateOf(i),
+        offset:daysBetween(i.originalDue||planDateOf(i),planDateOf(i))
+      }));
+    let due=toISO(addRecurrence(parseISO(newAssumedDate),chore));
+    future.forEach(({instance:i,oldPlan,offset})=>{
+      i.originalDue=due;
+      if(!i.pinned)setPlanDate(i,toISO(addDays(parseISO(due),offset)));
+      else if(oldPlan)setPlanDate(i,oldPlan);
+      i.rebasedFrom=reason;
+      due=toISO(addRecurrence(parseISO(planDateOf(i)||due),chore));
+    });
+  }
+
+  function reflowFuturePlansToFixedRhythm(chore,currentInstance,reason='fixed'){
+    if(!chore||!currentInstance||(chore.recurrenceType||'interval')!=='interval')return;
+    const currentDue=currentInstance.originalDue||planDateOf(currentInstance);
+    if(!currentDue)return;
+    const future=state.instances
+      .filter(i=>i.id!==currentInstance.id&&i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))>currentDue)
+      .sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b)))
+      .map(i=>({instance:i,offset:daysBetween(i.originalDue||planDateOf(i),planDateOf(i)),oldPlan:planDateOf(i)}));
+    let due=nextFixedIntervalAfter(chore,currentDue);
+    future.forEach(({instance:i,offset,oldPlan})=>{
+      i.originalDue=due;
+      if(!i.pinned)setPlanDate(i,toISO(addDays(parseISO(due),offset)));
+      else if(oldPlan)setPlanDate(i,oldPlan);
+      i.rebasedFrom=reason;
+      due=nextFixedIntervalAfter(chore,due);
     });
   }
 
   function completeInstance(id, completedBy, scheduleChoice=null) {
     const i=instanceById(id); if(!i) return;
-    const now=new Date(); i.completed=true; i.completedAt=now.toISOString(); i.completedBy=completedBy;
-    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt:now.toISOString(), originallyDue:i.originalDue||i.scheduledDate });
+    const now=new Date();
+    const actualDate=toISO(today());
+    const intendedPlan=planDateOf(i)||actualDate;
+    i.completed=true; i.completedAt=now.toISOString(); i.completedBy=completedBy;
+    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt:now.toISOString(), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan });
     if(i.choreId){
       const chore=choreById(i.choreId);
       if(chore){
-        chore.lastCompleted=toISO(today());
-        chore.lastDueSatisfied=i.originalDue||i.scheduledDate||toISO(today());
-        chore.nextDueOverride=null;
         const behavior=scheduleChoice || chore.scheduleBehavior;
         if(chore.scheduleBehavior==='ask' && scheduleChoice) chore.lastCompletionChoice=scheduleChoice;
-        shiftFuturePlansAfterCompletion(chore,i,toISO(today()),behavior);
+        // Reality replaces the planned assumption. This happens before updating
+        // lastCompleted so already-planned future occurrences can be rebased.
+        if(behavior==='fixed')reflowFuturePlansToFixedRhythm(chore,i,'fixed-completion');
+        else rebaseFuturePlansAfterAssumptionChange(chore,i,intendedPlan,actualDate,'completion');
+        chore.lastCompleted=actualDate;
+        chore.lastDueSatisfied=i.originalDue||intendedPlan||actualDate;
+        chore.nextDueOverride=null;
         if((chore.recurrenceType||'interval')==='interval' && behavior!=='fixed') {
-          // Completion-based interval chores restart their rhythm from the day they were actually done.
-          chore.anchorDate=toISO(today());
-        } else chore.anchorDate=chore.startDate||chore.anchorDate||i.originalDue||toISO(today());
+          chore.anchorDate=actualDate;
+        } else chore.anchorDate=chore.startDate||chore.anchorDate||i.originalDue||actualDate;
       }
     }
     saveState('Marked complete');
     renderAll();
   }
 
-  function moveInstance(id,date,assignee) {
+  function moveInstance(id,date,assignee,pinned=false) {
     const i=instanceById(id); if(!i) return;
-    i.scheduledDate=date; i.assignedTo=assignee; i.snoozed=true;
-    saveState('Chore moved'); renderAll();
+    const oldPlan=planDateOf(i)||date;
+    const chore=choreById(i.choreId);
+    setPlanDate(i,date);
+    i.assignedTo=assignee;
+    i.snoozed=Boolean(i.originalDue&&date!==i.originalDue);
+    i.manualPlan=true;
+    i.pinned=Boolean(pinned);
+    if(chore)rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,date,'plan');
+    saveState(i.pinned?'Plan pinned':'Plan updated'); renderAll();
   }
 
   function forecastMoveKey(choreId,dueDate){ return `forecast|${choreId}|${dueDate}`; }
@@ -461,19 +535,23 @@
     const [,choreId,dueDate]=String(value).split('|');
     return choreId&&dueDate?{choreId,dueDate}:null;
   }
-  function scheduleForecast(choreId,dueDate,date,assignee){
+  function scheduleForecast(choreId,dueDate,date,assignee,pinned=false){
     const chore=choreById(choreId);if(!chore)return;
-    let existing=state.instances.find(i=>i.choreId===choreId&&!i.completed&&!i.cancelled&&(i.originalDue||i.scheduledDate)===dueDate);
+    let existing=state.instances.find(i=>i.choreId===choreId&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))===dueDate);
     if(existing){
-      existing.scheduledDate=date;existing.assignedTo=assignee;existing.snoozed=date!==dueDate;
+      const oldPlan=planDateOf(existing)||dueDate;
+      setPlanDate(existing,date);existing.assignedTo=assignee;existing.snoozed=date!==dueDate;existing.manualPlan=true;existing.pinned=Boolean(pinned);
+      rebaseFuturePlansAfterAssumptionChange(chore,existing,oldPlan,date,'plan');
     }else{
-      state.instances.push({
+      existing={
         id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,
-        originalDue:dueDate,scheduledDate:date,assignedTo:assignee||chooseAssignee(chore,startOfWeek(parseISO(date))),
-        completed:false,completedAt:null,oneOff:false,snoozed:date!==dueDate,plannedFromForecast:true,createdAt:new Date().toISOString()
-      });
+        originalDue:dueDate,scheduledDate:date,plannedDate:date,assignedTo:assignee||normalizeAssignee(chore.assignee)||'either',
+        completed:false,completedAt:null,oneOff:false,snoozed:date!==dueDate,plannedFromForecast:true,manualPlan:true,pinned:Boolean(pinned),createdAt:new Date().toISOString()
+      };
+      state.instances.push(existing);
+      rebaseFuturePlansAfterAssumptionChange(chore,existing,dueDate,date,'plan');
     }
-    saveState(date===dueDate?'Forecast added to plan':'Forecast moved into plan');renderAll();
+    saveState(existing.pinned?'Forecast pinned to plan':date===dueDate?'Forecast added to plan':'Forecast moved into plan');renderAll();
   }
 
   function renderAll() {
@@ -484,9 +562,10 @@
   function renderToday() {
     const t=toISO(today());
     document.getElementById('todayDate').textContent=formatLong(t).toUpperCase();
-    const todays=state.instances.filter(i=>i.scheduledDate===t&&!i.cancelled);
-    const open=todays.filter(i=>!i.completed);
-    const completed=todays.filter(i=>i.completed);
+    // An unfinished plan stays attached to the day Mak intended to do it, but
+    // Today keeps surfacing it until it is completed or deliberately moved.
+    const open=state.instances.filter(i=>!i.completed&&!i.cancelled&&planDateOf(i)&&planDateOf(i)<=t);
+    const completed=state.instances.filter(i=>i.completed&&!i.cancelled&&String(i.completedAt||'').slice(0,10)===t);
     const list=document.getElementById('todayTaskList'); list.innerHTML='';
     open.sort((a,b)=>priorityScore(a)-priorityScore(b)).forEach(i=>list.appendChild(todayTaskCard(i)));
     document.getElementById('todayCount').textContent=`${open.length} left`;
@@ -566,7 +645,7 @@
   function openOverviewComplete(chore){
     let inst=getOpenRecurringInstance(chore.id);
     if(!inst){
-      inst={id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,originalDue:nextDue(chore),scheduledDate:toISO(today()),assignedTo:chooseAssignee(chore,startOfWeek(today())),completed:false,oneOff:false,overviewCompletion:true,createdAt:new Date().toISOString()};
+      inst={id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,originalDue:nextDue(chore),scheduledDate:toISO(today()),plannedDate:toISO(today()),assignedTo:chooseAssignee(chore,startOfWeek(today())),completed:false,oneOff:false,overviewCompletion:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()};
       state.instances.push(inst);saveState('');
     }
     openComplete(inst.id);
@@ -607,7 +686,7 @@
             <div><span>Rhythm</span><strong>${esc(recurrenceText(chore))}</strong></div>
             <div><span>Due</span><strong>${formatShort(info.due)}</strong></div>
             <div><span>Grace through</span><strong>${formatShort(info.graceEnd)}</strong></div>
-            ${openInst?`<div><span>Planned</span><strong>${formatShort(openInst.scheduledDate)} • ${esc(personLabel(openInst.assignedTo))}</strong></div>`:''}
+            ${openInst?`<div><span>Planned</span><strong>${formatShort(planDateOf(openInst))} • ${esc(personLabel(openInst.assignedTo))}${openInst.pinned?' • 📌':''}</strong></div>`:''}
           </div>
           <div class="overview-detail-actions"><button type="button" class="primary-btn overview-done">✓ Mark done</button>${openInst?'<button type="button" class="secondary-btn overview-snooze">Move / snooze</button>':''}<button type="button" class="text-btn overview-edit">Edit chore</button></div>
         </div>`;
@@ -631,7 +710,7 @@
     const el=document.createElement('div'); el.className='task-card';
     const status=statusForInstance(i);
     const statusBadge=status==='overdue'?'<span class="badge overdue">Needs attention</span>':status==='grace'?'<span class="badge grace">Grace day</span>':'';
-    const dueNote=i.originalDue && i.originalDue!==i.scheduledDate ? `Originally due ${formatShort(i.originalDue)}` : recurrenceNote(i);
+    const dueNote=instanceTimingNote(i);
     el.innerHTML=`
       <button class="done-check" aria-label="Mark ${esc(i.name)} complete">✓</button>
       <div><div class="task-name">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="task-meta"><span>${esc(personLabel(i.assignedTo))}</span><span>•</span><span>${esc(dueNote)}</span>${statusBadge}</div></div>
@@ -639,6 +718,15 @@
     el.querySelector('.done-check').addEventListener('click',()=>openComplete(i.id));
     el.querySelector('.more-btn').addEventListener('click',()=>openMove(i.id));
     return el;
+  }
+  function instanceTimingNote(i){
+    const planned=planDateOf(i);
+    const due=i.originalDue;
+    if(!due)return i.oneOff?(planned?`Planned ${relativeDate(planned).toLowerCase()}`:'One-off'):recurrenceNote(i);
+    if(!planned||planned===due)return `Due ${relativeDate(due).toLowerCase()}`;
+    const plannedText=relativeDate(planned).toLowerCase();
+    const dueText=relativeDate(due).toLowerCase();
+    return planned<due?`Planned ${plannedText} • due ${dueText}`:`Due ${dueText} • planned ${plannedText}`;
   }
   function recurrenceNote(i){ const c=choreById(i.choreId); return c?recurrenceText(c):'One-off'; }
 
@@ -667,9 +755,9 @@
     const byDue=new Map();
     state.instances
       .filter(i=>i.choreId===choreId&&!i.completed&&!i.cancelled)
-      .sort((a,b)=>(a.originalDue||a.scheduledDate).localeCompare(b.originalDue||b.scheduledDate)||a.scheduledDate.localeCompare(b.scheduledDate))
+      .sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b))||planDateOf(a).localeCompare(planDateOf(b)))
       .forEach(i=>{
-        const key=i.originalDue||i.scheduledDate;
+        const key=i.originalDue||planDateOf(i);
         if(!byDue.has(key)) byDue.set(key,i);
       });
     return byDue;
@@ -701,14 +789,14 @@
     // occurrences.
     while(due<startIso && guard++<4000){
       const planned=plannedByDue.get(due);
-      const next=advanceProjectedDue(chore,due,planned?.scheduledDate||null);
+      const next=advanceProjectedDue(chore,due,planned?planDateOf(planned):null);
       if(!next||next<=due) return out;
       due=next;
     }
     while(due<=endIso && guard++<4000){
       const planned=plannedByDue.get(due);
       if(!planned) out.push(due);
-      const next=advanceProjectedDue(chore,due,planned?.scheduledDate||null);
+      const next=advanceProjectedDue(chore,due,planned?planDateOf(planned):null);
       if(!next||next<=due) break;
       due=next;
     }
@@ -717,15 +805,29 @@
 
   function plannerForecastMap(startIso,endIso){
     const map=new Map();
-    const represented=new Set(state.instances.filter(i=>!i.cancelled&&i.choreId).map(i=>`${i.choreId}|${i.originalDue||i.scheduledDate}`));
+    const represented=new Set(state.instances.filter(i=>!i.cancelled&&i.choreId).map(i=>`${i.choreId}|${i.originalDue||planDateOf(i)}`));
     state.chores.filter(c=>c.active!==false).forEach(chore=>{
       projectedDueDates(chore,startIso,endIso).forEach(due=>{
         if(represented.has(`${chore.id}|${due}`)) return;
         if(!map.has(due)) map.set(due,[]);
-        map.get(due).push({preview:true,choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,dueDate:due});
+        map.get(due).push({preview:true,choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,dueDate:due,assignedTo:normalizeAssignee(chore.assignee)});
       });
     });
     return map;
+  }
+
+  function manualHistoryItemsForDate(iso){
+    return state.chores.filter(c=>c.active!==false&&c.lastCompleted===iso).filter(c=>{
+      return !state.instances.some(i=>i.choreId===c.id&&i.completed&&String(i.completedAt||'').slice(0,10)===iso);
+    }).map(c=>({
+      id:`history-seed|${c.id}|${iso}`,historicalSeed:true,choreId:c.id,name:c.name,category:c.category,importance:c.importance,
+      scheduledDate:iso,plannedDate:iso,completed:true,completedAt:`${iso}T12:00:00`,completedBy:null,assignedTo:'either',oneOff:false
+    }));
+  }
+
+  function plannerItemsForDate(iso){
+    const actual=state.instances.filter(i=>!i.cancelled&&calendarDateForInstance(i)===iso);
+    return [...actual,...manualHistoryItemsForDate(iso)].sort((a,b)=>Number(a.completed)-Number(b.completed)||priorityScore(a)-priorityScore(b)||a.name.localeCompare(b.name));
   }
 
   function openPlannerWeekForDate(date){
@@ -738,15 +840,16 @@
     const btn=document.createElement('button');
     btn.type='button';
     if(item.preview){
-      btn.className=`calendar-task forecast importance-${item.importance||'regular'}`;
-      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">due</span>`;
+      btn.className=`calendar-task forecast ${assigneeClass(item.assignedTo)}`;
+      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(personLabel(item.assignedTo))}</span>`;
       btn.title=`${item.name} • due ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
       btn.addEventListener('click',e=>{e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
     } else {
-      btn.className=`calendar-task planned importance-${item.importance||'regular'}${item.completed?' done':''}`;
-      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(item.completed?personLabel(item.completedBy):personLabel(item.assignedTo))}</span>`;
-      btn.title=item.completed?`${item.name} • completed by ${personLabel(item.completedBy)}`:`${item.name} • planned for ${formatShort(item.scheduledDate)}`;
-      btn.addEventListener('click',e=>{e.stopPropagation();item.completed?toast(`Completed by ${personLabel(item.completedBy)}`):openMove(item.id);});
+      const owner=item.assignedTo||'either';
+      btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.pinned?' pinned':''}`;
+      btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
+      btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
+      btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else item.completed?toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`):openMove(item.id);});
     }
     return btn;
   }
@@ -763,7 +866,7 @@
     while(date<=gridEnd){
       const cellDate=new Date(date);
       const iso=toISO(cellDate);
-      const actual=state.instances.filter(i=>i.scheduledDate===iso&&!i.cancelled).sort((a,b)=>Number(a.completed)-Number(b.completed)||priorityScore(a)-priorityScore(b));
+      const actual=plannerItemsForDate(iso);
       const previews=(forecast.get(iso)||[]).sort((a,b)=>(a.importance==='essential'?0:a.importance==='regular'?1:2)-(b.importance==='essential'?0:b.importance==='regular'?1:2)||a.name.localeCompare(b.name));
       const items=[...actual,...previews];
       const outside=plannerViewMode==='month'&&cellDate.getMonth()!==period.start.getMonth();
@@ -796,16 +899,17 @@
     const rebalance=document.getElementById('rebalanceBtn');
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.classList.toggle('active',b.dataset.plannerView===plannerViewMode));
     legend.classList.remove('hidden');
+    legend.innerHTML=`<span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-person1"></i> ${esc(personLabel('person1'))}</span><span><i class="legend-person2"></i> ${esc(personLabel('person2'))}</span><span><i class="legend-either"></i> Either</span><span>📌 Pinned</span>`;
     if(plannerViewMode==='week'){
-      title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='See the same expected schedule as Month view, then move only what you want to change.';
+      title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Due is the routine. Planned is your intention. Completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
-      note.innerHTML='<strong>Continuous schedule:</strong> outlined chores are future forecasts; solid chores are planned. A forecast automatically becomes planned when its due day arrives. Moving or assigning one plans it early and can shift later completion-based forecasts.';
+      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are plans. If you move a completion-based chore, later plans follow that assumption. If you actually finish it early or late, unpinned future plans shift again to match reality. 📌 pinned dates stay put.';
       rebalance.classList.remove('hidden');
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
       for(let d=0;d<7;d++){
         const date=addDays(ws,d), iso=toISO(date);
-        const actual=state.instances.filter(i=>i.scheduledDate===iso&&!i.cancelled).sort((a,b)=>Number(a.completed)-Number(b.completed)||priorityScore(a)-priorityScore(b));
+        const actual=plannerItemsForDate(iso);
         const previews=(forecast.get(iso)||[]).sort((a,b)=>(a.importance==='essential'?0:a.importance==='regular'?1:2)-(b.importance==='essential'?0:b.importance==='regular'?1:2)||a.name.localeCompare(b.name));
         const col=document.createElement('section'); col.className='day-column'+(sameDate(date,today())?' today':''); col.dataset.date=iso;
         const load=actual.filter(i=>!i.completed).length+previews.length;
@@ -824,7 +928,8 @@
             const chore=choreById(forecastTarget.choreId);
             scheduleForecast(forecastTarget.choreId,forecastTarget.dueDate,iso,chore?chooseAssignee(chore,ws):'either');
           }else{
-            moveInstance(payload,iso,instanceById(payload)?.assignedTo||'either');
+            const existing=instanceById(payload);
+            moveInstance(payload,iso,existing?.assignedTo||'either',Boolean(existing?.pinned));
           }
         });
         board.appendChild(col);
@@ -832,7 +937,7 @@
       return;
     }
     rebalance.classList.add('hidden');
-    note.innerHTML='<strong>Continuous schedule:</strong> outlined chores are forecasts until you plan them or their due day arrives. Completion-based forecasts use a planned date when one exists; actual completion then becomes the new anchor if it happens early or late.';
+    note.innerHTML='<strong>Continuous schedule:</strong> forecasts show the expected rhythm; plans show your current intention. Completion-based routines reflow from real completion dates, while pinned plans stay on their exact calendar date.';
     if(plannerViewMode==='fortnight'){
       title.textContent='2-Week Planner';eyebrow.textContent='LOOK AHEAD';subtitle.textContent='See the same continuous schedule across two weeks without turning future chores into today’s obligations.';
       label.textContent=`${formatShort(period.start)} – ${formatShort(period.end)}`;
@@ -844,11 +949,17 @@
   }
 
   function plannerCard(i){
-    const el=document.createElement('article'); el.className=`planner-card importance-${i.importance||'regular'}${i.completed?' done':''}`; el.draggable=!i.completed; el.dataset.id=i.id;
+    const owner=i.assignedTo||'either';
+    const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.historicalSeed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
-    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.completed?personLabel(i.completedBy):personLabel(i.assignedTo))}</span><button class="planner-card-menu" aria-label="Move or edit">•••</button></div>${(!i.completed&&i.originalDue&&i.originalDue!==i.scheduledDate)?`<div class="original-due">${overdue?'Overdue • ':''}originally ${formatShort(i.originalDue)}</div>`:''}`;
-    el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',i.id));
-    el.querySelector('.planner-card-menu').addEventListener('click',()=>i.completed?toast(`Completed by ${personLabel(i.completedBy)}`):openMove(i.id));
+    const plan=planDateOf(i);
+    const completedDate=i.completedAt?String(i.completedAt).slice(0,10):null;
+    const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
+      ?`<div class="original-due">${overdue?'Overdue • ':''}due ${formatShort(i.originalDue)}</div>`
+      :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
+    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span>${i.historicalSeed?'':`<button class="planner-card-menu" aria-label="Move or edit">•••</button>`}</div>${timing}`;
+    el.addEventListener('dragstart',e=>{if(!i.historicalSeed)e.dataTransfer.setData('text/plain',i.id);});
+    el.querySelector('.planner-card-menu')?.addEventListener('click',()=>i.completed?toast(`Completed${i.completedBy?` by ${personLabel(i.completedBy)}`:''}`):openMove(i.id));
     el.addEventListener('dblclick',()=>{if(!i.completed)openComplete(i.id);});
     return el;
   }
@@ -856,11 +967,11 @@
   function plannerForecastCard(item){
     const chore=choreById(item.choreId);
     const el=document.createElement('article');
-    el.className=`planner-card forecast-card importance-${item.importance||'regular'}`;
+    el.className=`planner-card forecast-card ${assigneeClass(item.assignedTo)}`;
     el.draggable=true;
     el.dataset.choreId=item.choreId;
     el.dataset.dueDate=item.dueDate;
-    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast</span><button class="planner-card-menu" aria-label="Plan this occurrence">•••</button></div><div class="forecast-due">due ${formatShort(item.dueDate)}</div>`;
+    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(personLabel(item.assignedTo))}</span><button class="planner-card-menu" aria-label="Plan this occurrence">•••</button></div><div class="forecast-due">due ${formatShort(item.dueDate)}</div>`;
     el.title=chore?`${item.name} • ${recurrenceText(chore)}`:`${item.name} • forecast`;
     el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',forecastMoveKey(item.choreId,item.dueDate)));
     el.querySelector('.planner-card-menu').addEventListener('click',()=>openForecastMove(item.choreId,item.dueDate));
@@ -966,6 +1077,22 @@
     if(allBtn){allBtn.disabled=!visible.length;allBtn.textContent=allVisible?'Deselect all shown':`Select all shown${visible.length?` (${visible.length})`:''}`;}
   }
 
+  function nextOpenPlanForChore(chore){
+    const due=nextDue(chore);
+    const open=state.instances.filter(i=>i.choreId===chore.id&&!i.completed&&!i.cancelled);
+    return open.find(i=>(i.originalDue||planDateOf(i))===due) || null;
+  }
+
+  function choreNextMarkup(chore){
+    const due=nextDue(chore);
+    const plan=nextOpenPlanForChore(chore);
+    if(!plan)return `<span>${esc(relativeDate(due))}</span>`;
+    const planned=planDateOf(plan);
+    const planText=relativeDate(planned);
+    const dueText=relativeDate(plan.originalDue||due);
+    return `<div class="chore-next-stack"><strong>${plan.pinned?'📌 ':''}Planned ${esc(planText.toLowerCase())}</strong><span>${planned===(plan.originalDue||due)?'Due same day':`Due ${esc(dueText.toLowerCase())}`}</span></div>`;
+  }
+
   function renderChores(){
     const filters=document.getElementById('categoryFilters'); filters.innerHTML='';
     ['All',...CATEGORIES].forEach(cat=>{const b=document.createElement('button');b.className='chip'+(activeCategory===cat?' active':'');b.textContent=cat;b.addEventListener('click',()=>{activeCategory=cat;renderChores();});filters.appendChild(b);});
@@ -1004,13 +1131,13 @@
       const checked=selectedChoreIds.has(c.id);
       const tags=tagMarkup(c.tags);
       const tr=document.createElement('tr');tr.classList.toggle('selected-row',checked);
-      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${relativeDate(c.lastCompleted)}</td><td>${relativeDate(nextDue(c))}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
+      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${relativeDate(c.lastCompleted)}</td><td>${choreNextMarkup(c)}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
       tr.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       tr.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id));
       tr.querySelector('.delete-chore').addEventListener('click',()=>deleteChore(c.id)); body.appendChild(tr);
 
       const card=document.createElement('div'); card.className='chore-mobile-card'+(checked?' selected-row':'');
-      card.innerHTML=`<div class="chore-mobile-top"><div class="mobile-select-title"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /><div><div class="chore-mobile-title">${CATEGORY_EMOJI[c.category]} ${esc(c.name)}</div><div class="chore-mobile-meta"><span class="badge">${esc(c.category)}</span><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></div>${tags?`<div class="tag-row">${tags}</div>`:''}</div></div><button class="text-btn edit-chore">Edit</button></div><div class="chore-mobile-dates"><span>Last: ${relativeDate(c.lastCompleted)}</span><span>Next: ${relativeDate(nextDue(c))}</span></div>`;
+      card.innerHTML=`<div class="chore-mobile-top"><div class="mobile-select-title"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /><div><div class="chore-mobile-title">${CATEGORY_EMOJI[c.category]} ${esc(c.name)}</div><div class="chore-mobile-meta"><span class="badge">${esc(c.category)}</span><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></div>${tags?`<div class="tag-row">${tags}</div>`:''}</div></div><button class="text-btn edit-chore">Edit</button></div><div class="chore-mobile-dates"><div>Last: ${relativeDate(c.lastCompleted)}</div><div>${choreNextMarkup(c)}</div></div>`;
       card.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       card.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id)); mobile.appendChild(card);
     });
@@ -1050,7 +1177,7 @@
         // A batch change to the default person should update routine-generated
         // upcoming plans, while preserving occurrences the user explicitly
         // moved/planned (those may intentionally be assigned differently).
-        if(assignee&&!i.snoozed&&!i.plannedFromForecast)i.assignedTo=assignee;
+        if(assignee&&!i.manualPlan&&!i.pinned)i.assignedTo=assignee;
       });
     });
     const count=ids.size;selectedChoreIds.clear();
@@ -1195,21 +1322,24 @@
 
   function openMove(id){
     const i=instanceById(id); if(!i)return;
-    document.getElementById('moveInstanceId').value=id;document.getElementById('moveTaskName').textContent=i.name;document.getElementById('moveDate').value=i.scheduledDate;document.getElementById('moveAssignee').value=i.assignedTo||'either';document.getElementById('moveDialog').showModal();
+    document.getElementById('moveInstanceId').value=id;document.getElementById('moveTaskName').textContent=i.name;document.getElementById('moveDueHint').textContent=i.originalDue?`Routine due: ${formatLong(i.originalDue)}`:'One-off chore';document.getElementById('moveDate').value=planDateOf(i);document.getElementById('moveAssignee').value=i.assignedTo||'either';document.getElementById('pinPlanDate').checked=Boolean(i.pinned);document.getElementById('moveDialog').showModal();
   }
 
   function openForecastMove(choreId,dueDate){
     const chore=choreById(choreId);if(!chore)return;
     document.getElementById('moveInstanceId').value=forecastMoveKey(choreId,dueDate);
     document.getElementById('moveTaskName').textContent=chore.name;
+    document.getElementById('moveDueHint').textContent=`Routine due: ${formatLong(dueDate)}`;
     document.getElementById('moveDate').value=dueDate;
     document.getElementById('moveAssignee').value=chooseAssignee(chore,startOfWeek(parseISO(dueDate)));
+    document.getElementById('pinPlanDate').checked=false;
     document.getElementById('moveDialog').showModal();
   }
 
   function addOneOff(){
     const name=document.getElementById('oneOffName').value.trim();if(!name)return;
-    state.instances.push({id:uid('inst'),choreId:null,name,category:document.getElementById('oneOffCategory').value,importance:'regular',originalDue:document.getElementById('oneOffDate').value,scheduledDate:document.getElementById('oneOffDate').value,assignedTo:document.getElementById('oneOffAssignee').value,completed:false,oneOff:true,createdAt:new Date().toISOString()});
+    const date=document.getElementById('oneOffDate').value;
+    state.instances.push({id:uid('inst'),choreId:null,name,category:document.getElementById('oneOffCategory').value,importance:'regular',originalDue:date,scheduledDate:date,plannedDate:date,assignedTo:document.getElementById('oneOffAssignee').value,completed:false,oneOff:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()});
     saveState('One-off chore added');document.getElementById('oneOffDialog').close();document.getElementById('oneOffForm').reset();renderAll();
   }
 
@@ -1226,7 +1356,9 @@
       const card=document.createElement('div');card.className='task-card';
       card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${x.days<=0?'Due now':`Due ${relativeDate(x.due).toLowerCase()}`}</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Add today</button>`;
       card.querySelector('button').addEventListener('click',()=>{
-        state.instances.push({id:uid('inst'),choreId:x.chore.id,name:x.chore.name,category:x.chore.category,importance:x.chore.importance,originalDue:x.due,scheduledDate:t,assignedTo:chooseAssignee(x.chore,startOfWeek(today())),completed:false,oneOff:false,optionalPullForward:true,createdAt:new Date().toISOString()});
+        const inst={id:uid('inst'),choreId:x.chore.id,name:x.chore.name,category:x.chore.category,importance:x.chore.importance,originalDue:x.due,scheduledDate:t,plannedDate:t,assignedTo:chooseAssignee(x.chore,startOfWeek(today())),completed:false,oneOff:false,optionalPullForward:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()};
+        state.instances.push(inst);
+        rebaseFuturePlansAfterAssumptionChange(x.chore,inst,x.due,t,'plan');
         saveState('Added to today — still optional');document.getElementById('energyDialog').close();renderAll();
       });wrap.appendChild(card);
     });
@@ -1235,16 +1367,26 @@
 
   function rebalanceRemainingWeek(){
     const ws=startOfWeek(plannerWeekStart), we=endOfWeek(ws), todayIso=toISO(today());
-    const within=state.instances.filter(i=>!i.completed&&!i.cancelled&&i.scheduledDate>=toISO(ws)&&i.scheduledDate<=toISO(we)&&i.scheduledDate>=todayIso);
-    const loads={};for(let d=0;d<7;d++){const iso=toISO(addDays(ws,d));loads[iso]=0;}
-    within.sort((a,b)=>(a.originalDue||a.scheduledDate).localeCompare(b.originalDue||b.scheduledDate)).forEach(i=>{
+    const wsIso=toISO(ws),weIso=toISO(we);
+    const movable=state.instances.filter(i=>!i.completed&&!i.cancelled&&!i.pinned&&planDateOf(i)>=wsIso&&planDateOf(i)<=weIso&&planDateOf(i)>=todayIso);
+    const loadFor=date=>state.instances.filter(i=>!i.completed&&!i.cancelled&&i.id!==currentBalanceId&&planDateOf(i)===date).length;
+    let currentBalanceId=null;
+    movable.sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b))).forEach(i=>{
+      currentBalanceId=i.id;
       const chore=choreById(i.choreId);const grace=chore?getGrace(chore):2;
-      const earliest=maxISO(i.originalDue||i.scheduledDate,todayIso,toISO(ws));const latest=minISO(toISO(addDays(parseISO(i.originalDue||i.scheduledDate),grace)),toISO(we));
-      let candidates=[];for(let d=parseISO(earliest);toISO(d)<=latest;d=addDays(d,1))candidates.push(toISO(d));if(!candidates.length)candidates=[maxISO(todayIso,toISO(ws))];
-      candidates.sort((a,b)=>(loads[a]||0)-(loads[b]||0)||a.localeCompare(b));i.scheduledDate=candidates[0];loads[i.scheduledDate]=(loads[i.scheduledDate]||0)+1;
+      const due=i.originalDue||planDateOf(i);
+      const earliest=maxISO(due,todayIso,wsIso);const latest=minISO(toISO(addDays(parseISO(due),grace)),weIso);
+      let candidates=[];for(let d=parseISO(earliest);toISO(d)<=latest;d=addDays(d,1))candidates.push(toISO(d));if(!candidates.length)candidates=[maxISO(todayIso,wsIso)];
+      candidates.sort((a,b)=>loadFor(a)-loadFor(b)||a.localeCompare(b));
+      const target=candidates[0],oldPlan=planDateOf(i);
+      if(target!==oldPlan){
+        setPlanDate(i,target);i.snoozed=Boolean(i.originalDue&&target!==i.originalDue);i.manualPlan=true;
+        if(chore)rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,target,'balance');
+      }
     });
     saveState('Planned chores balanced');renderAll();
   }
+
   function maxISO(...xs){return xs.filter(Boolean).sort().slice(-1)[0];}
   function minISO(...xs){return xs.filter(Boolean).sort()[0];}
 
@@ -1358,7 +1500,7 @@
     document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
     document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;completeInstance(id,document.getElementById('completedBy').value,choice);document.getElementById('completeDialog').close();});
-    document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const assignee=document.getElementById('moveAssignee').value;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,assignee);else moveInstance(target,date,assignee);document.getElementById('moveDialog').close();});
+    document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const assignee=document.getElementById('moveAssignee').value;const pinned=document.getElementById('pinPlanDate').checked;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,assignee,pinned);else moveInstance(target,date,assignee,pinned);document.getElementById('moveDialog').close();});
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.addEventListener('click',()=>{plannerViewMode=b.dataset.plannerView;plannerWeekStart=plannerViewMode==='month'?new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth(),1):startOfWeek(plannerWeekStart);renderPlanner();}));
     document.getElementById('prevWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()-1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?-14:-7);renderPlanner();});
     document.getElementById('nextWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()+1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?14:7);renderPlanner();});

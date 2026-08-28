@@ -160,9 +160,9 @@
             <button class="chip" data-planner-view="fortnight">2 Weeks</button>
             <button class="chip" data-planner-view="month">Month</button>
           </div>
-          <div class="planner-legend" id="plannerLegend"><span><i class="legend-solid"></i> Scheduled</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-essential"></i> Essential</span><span><i class="legend-regular"></i> Regular</span><span><i class="legend-low"></i> Low stakes</span></div>
+          <div class="planner-legend" id="plannerLegend"><span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-person1"></i> Mak</span><span><i class="legend-person2"></i> Ty</span><span><i class="legend-either"></i> Either</span><span>📌 Pinned</span></div>
         </div>
-        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> every view shows the same continuous schedule. Outlined chores are future forecasts; they become solid planned chores automatically when their due day arrives, or earlier if you move/assign them.</div>
+        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> due dates belong to the chore rhythm; planned dates are when you intend to do them. Unpinned future plans move when an earlier completion changes the rhythm.</div>
         <div class="week-board" id="weekBoard"></div>
         <div class="planner-footer">
           <button class="secondary-btn" id="addOneOffBtn">＋ Add one-off chore</button>
@@ -220,7 +220,7 @@
               <th><button class="sort-head" data-sort="recurrence">Rhythm <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="importance">Importance <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="lastCompleted">Last done <span class="sort-indicator"></span></button></th>
-              <th><button class="sort-head" data-sort="nextDue">Next due <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="nextDue">Next / plan <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="assignee">Default <span class="sort-indicator"></span></button></th>
               <th></th>
             </tr></thead>
@@ -404,11 +404,13 @@
 
   <dialog id="moveDialog" class="modal small-modal">
     <form method="dialog" id="moveForm">
-      <div class="modal-head"><div><p class="section-kicker">MOVE CHORE</p><h2 id="moveTaskName">Move chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <div class="modal-head"><div><p class="section-kicker">PLAN OCCURRENCE</p><h2 id="moveTaskName">Plan chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
       <input type="hidden" id="moveInstanceId" />
-      <label>Move to<input id="moveDate" type="date" required /></label>
+      <p class="modal-copy" id="moveDueHint">Routine due date</p>
+      <label>Planned date<input id="moveDate" type="date" required /></label>
       <label>Assigned to<select id="moveAssignee"></select></label>
-      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmMoveBtn" value="default">Move</button></div>
+      <label class="pin-plan-row"><input id="pinPlanDate" type="checkbox" /> <span><strong>Pin this date</strong><small>Keep this occurrence on this exact day even if an earlier completion shifts the routine.</small></span></label>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmMoveBtn" value="default">Save plan</button></div>
     </form>
   </dialog>
 

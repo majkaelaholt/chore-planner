@@ -2,6 +2,18 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.13
+
+- Reworked the planner around three separate dates: **Due** (routine rhythm), **Planned** (your current intention), and **Completed** (what actually happened).
+- A chore can now correctly say **Planned tomorrow · Due Sunday** instead of making those dates compete.
+- Completion-based routines reflow future **planned** occurrences when an earlier plan is moved or actually completed early/late.
+- Unpinned plans preserve their relative adjustment from the due date; **📌 pinned** plans stay on their exact calendar date.
+- Missed chores stay attached to their original planned date while still surfacing in Today; the app no longer rewrites the plan date just to carry them forward.
+- Manually entered **Last completed** dates now appear as subdued completed items on the calendar, even when there was no prior app history.
+- Planner card shading now represents assignment instead of importance: muted pink for Mak, muted blue for Ty, and neutral beige for Either.
+- Completed calendar items appear on the date they were actually completed.
+- Bumped the PWA cache to `household-v1-13`.
+
 ## v1.12
 
 - Forecasted recurring chores now automatically become planned when their due day arrives.
@@ -73,14 +85,14 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 
 - **Today view** only shows chores that belong to today and celebrates when the day is handled.
 - **Household Overview** visualizes maintenance freshness for Essential chores by default, with an optional all-chore view and category statuses.
-- **Planner** has Week / 2 Weeks / Month views that all show the same continuous schedule. Solid cards are explicit plans; outlined cards are forecasts. Moving a forecast makes that occurrence a plan and re-anchors later completion-based forecasts.
+- **Planner** has Week / 2 Weeks / Month views that all show the same continuous schedule. Solid cards are explicit plans; outlined cards are forecasts. Due dates stay tied to the routine while planned dates can move independently, and completion-based plans reflow when reality changes.
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
 - **Mak / Ty / Either assignments** with automatic splitting for “Either” chores. If one person did a chore last time, the app prefers the other person next time.
 - **Recurring + one-off chores** in the same weekly planner.
 - **Flexible recurrence**: every X days/weeks/months, a specific weekday, a specific day of the month, or patterns like the first Sunday of each month.
 - **Editable Start date + Next due date** for each recurring chore, including one-cycle next-date overrides.
 - **Fixed, completion-based, or ask-each-time recurrence** behavior for interval-based chores.
-- **Carry-forward logic** moves missed chores to today while preserving the original due date.
+- **Missed-plan logic** keeps the original planned date intact while continuing to surface unfinished chores in Today.
 - **Extra Energy mode** reveals at most three optional suggestions only when you intentionally ask for more.
 - **History** records who completed each chore and when.
 - **Local-first storage** plus JSON export/import.
@@ -119,7 +131,7 @@ Every recurring chore has:
 - a default assignee
 - a schedule behavior
 
-The planner shows recurring chores continuously without requiring a generation step. Forecasts land on their expected due dates. You can drag/tap a forecast to intentionally move it within your week; that planned date becomes the temporary assumption for later completion-based occurrences. When you actually complete the chore, reality takes over and the future chain re-anchors again.
+The planner shows recurring chores continuously without requiring a generation step. Each occurrence can have a due date, a planned date, and eventually an actual completion date. Forecasts land on expected due dates. Planning an occurrence creates a temporary completion assumption; later unpinned plans follow that assumption. When the chore is actually completed, reality takes over and the future chain reflows. Pin an occurrence when a specific calendar date must not move.
 
 ## Default chore library
 

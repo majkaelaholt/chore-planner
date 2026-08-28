@@ -342,7 +342,7 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .planner-legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 10px; font-weight: 700; }
 .planner-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .planner-legend i { display: inline-block; width: 16px; height: 10px; border-radius: 4px; }
-.legend-solid { background: var(--surface-2); border: 1px solid var(--line); }
+.legend-solid { background: #fffdfa; border: 1px solid #8f8378; }
 .legend-outline { background: transparent; border: 1px dashed #aaa095; }
 .calendar-board { display: grid; grid-template-columns: repeat(7,minmax(112px,1fr)); gap: 8px; overflow-x: auto; padding-bottom: 9px; align-items: stretch; }
 .calendar-weekday { padding: 0 8px 5px; color: var(--muted); font-size: 9px; font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
@@ -393,24 +393,40 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .forecast-label { text-transform: uppercase; letter-spacing: .05em; }
 .forecast-due { margin-top: 5px; }
 
-/* v1.9 Sunday-first calendar + importance shading */
-.legend-essential { background: #f2ded9; border: 1px solid #dec0b9; }
-.legend-regular { background: #eee8da; border: 1px solid #d7ccb4; }
-.legend-low { background: var(--accent-soft); border: 1px solid #cbd5c3; }
+/* v1.13 assignee shading: ownership is the planner's primary color cue. */
+.legend-person1 { background: #f1dddd; border: 1px solid #d8bcbc; }
+.legend-person2 { background: #dfe8f0; border: 1px solid #bccbd8; }
+.legend-either { background: #eee8da; border: 1px solid #d7ccb4; }
 
 /* Detailed Week cards */
-.planner-card.importance-essential { background: #f7e7e3; border-color: #e2c4bd; }
-.planner-card.importance-regular { background: #f4eee2; border-color: #ddd1ba; }
-.planner-card.importance-low { background: #edf2e9; border-color: #ced8c7; }
-.planner-card.forecast-card.importance-essential { background: rgba(242,222,217,.48); border-color: #cfa99f; }
-.planner-card.forecast-card.importance-regular { background: rgba(238,232,218,.48); border-color: #bdb198; }
-.planner-card.forecast-card.importance-low { background: rgba(230,236,223,.50); border-color: #aebba5; }
+.planner-card.assignee-person1 { background: #f5e5e5; border-color: #dfc3c3; }
+.planner-card.assignee-person2 { background: #e7eef4; border-color: #c5d2dd; }
+.planner-card.assignee-either { background: #f4eee2; border-color: #ddd1ba; }
+.planner-card.forecast-card.assignee-person1 { background: rgba(241,221,221,.45); border-color: #cfaeae; }
+.planner-card.forecast-card.assignee-person2 { background: rgba(223,232,240,.48); border-color: #aebfcc; }
+.planner-card.forecast-card.assignee-either { background: rgba(238,232,218,.48); border-color: #bdb198; }
+.planner-card.pinned { box-shadow: inset 0 0 0 1px rgba(79,63,49,.12); }
+.planner-card.historical-seed { opacity: .48; cursor: default; }
 
 /* Compact 2-week / Month cards */
-.calendar-task.planned.importance-essential { background: #f7e7e3; border-color: #e2c4bd; }
-.calendar-task.planned.importance-regular { background: #f4eee2; border-color: #ddd1ba; }
-.calendar-task.planned.importance-low { background: #edf2e9; border-color: #ced8c7; }
-.calendar-task.forecast.importance-essential { background: rgba(242,222,217,.42); border-color: #cfa99f; }
-.calendar-task.forecast.importance-regular { background: rgba(238,232,218,.42); border-color: #bdb198; }
-.calendar-task.forecast.importance-low { background: rgba(230,236,223,.44); border-color: #aebba5; }
+.calendar-task.planned.assignee-person1 { background: #f5e5e5; border-color: #dfc3c3; }
+.calendar-task.planned.assignee-person2 { background: #e7eef4; border-color: #c5d2dd; }
+.calendar-task.planned.assignee-either { background: #f4eee2; border-color: #ddd1ba; }
+.calendar-task.forecast.assignee-person1 { background: rgba(241,221,221,.40); border-color: #cfaeae; }
+.calendar-task.forecast.assignee-person2 { background: rgba(223,232,240,.42); border-color: #aebfcc; }
+.calendar-task.forecast.assignee-either { background: rgba(238,232,218,.42); border-color: #bdb198; }
+.calendar-task.pinned { box-shadow: inset 0 0 0 1px rgba(79,63,49,.10); }
 
+
+/* v1.13 planning details */
+.pin-plan-row { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 10px !important; padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.42); }
+.pin-plan-row input { width: auto; margin-top: 3px; }
+.pin-plan-row span { display: grid; gap: 2px; text-transform: none; letter-spacing: 0; color: var(--ink); font-size: 12px; }
+.pin-plan-row small { color: var(--muted); font-size: 10px; line-height: 1.35; font-weight: 500; }
+.chore-next-stack { display: grid; gap: 2px; min-width: 0; }
+.chore-next-stack strong { font-size: 11px; font-weight: 760; color: var(--ink); }
+.chore-next-stack span { font-size: 9px; color: var(--muted); }
+.planner-card.assignee-person1 .assignee-dot::before { background: #c9959f; }
+.planner-card.assignee-person2 .assignee-dot::before { background: #8eaabd; }
+.planner-card.assignee-either .assignee-dot::before { background: #b6a78f; }
+.plan-history-note { font-size: 9px; color: var(--muted); margin-top: 5px; }
