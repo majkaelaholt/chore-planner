@@ -49,10 +49,19 @@ Every recurring chore has:
 
 The weekly planner will **never pull a future chore earlier than its due date just to fill an empty day**. It chooses the least-busy day between the due date and the end of its grace window. If the chore is already overdue when the week begins, it lands on the first available day while retaining its original due date.
 
-## Important note about auto-planning
+## Default chore library
 
-The supplied starter data is only sample household data. Edit/delete it and build your real chore library from the Chores page.
+The built-in defaults are Mak + Ty's household chore list. All recurring chores default to **Either** so the weekly planner can distribute them between Mak and Ty. Resetting to defaults restores this library while preserving app settings and Supabase credentials.
 
+The starter schedule does **not** fabricate completion history. It seeds first due dates across sensible upcoming days; once a chore is completed, its normal recurrence takes over.
+
+## v1.2
+- Replaced all sample chores with Mak + Ty's 23 household chores.
+- Added estimated recurrence, category, importance, and schedule behavior defaults.
+- All default recurring chores are assigned to **Either**.
+- Reset now restores the household default chore library while preserving app/Supabase settings.
+- Removed fabricated starter completion dates; default chores begin with `Never` as their last completion.
+- Bumped the PWA cache to `household-v1-2`.
 
 ## v1.1
 - Hardened Supabase push/pull backup handling.

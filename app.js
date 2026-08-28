@@ -12,38 +12,67 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 1,
+    version: 1.2,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
       supabaseUrl: '', supabaseKey: '', syncId: 'mak-household'
     },
     chores: [
-      makeChore('Vacuum floors','Cleaning',5,'days','regular','either','completion','Living areas'),
-      makeChore('Wipe surfaces','Cleaning',7,'days','regular','either','completion','Bedroom, office, living room'),
-      makeChore('Clean bathroom','Cleaning',7,'days','essential','either','completion','Bathroom'),
-      makeChore('Mop hard floors','Cleaning',10,'days','regular','either','completion','Kitchen + bathroom'),
-      makeChore('Change bed sheets','Laundry',7,'days','regular','either','completion',''),
-      makeChore('Wash towels','Laundry',7,'days','regular','either','completion',''),
-      makeChore('Wash dog bedding','Pets',14,'days','regular','either','completion',''),
-      makeChore('Clean pet bowls','Pets',7,'days','essential','either','completion',''),
-      makeChore('Take trash / recycling out','Maintenance / Routine',7,'days','essential','ty','fixed',''),
-      makeChore('Clean fridge shelves','Deep Clean',1,'months','low','either','completion',''),
-      makeChore('Clean oven','Deep Clean',3,'months','low','either','ask',''),
-      makeChore('Wipe baseboards','Deep Clean',3,'months','low','either','completion','')
+      // Everyday / frequent cleaning
+      makeChore('Clean the Kitchen','Cleaning',2,'days','essential','either','completion',0,'Kitchen'),
+      makeChore('Vacuum','Cleaning',4,'days','regular','either','completion',1,'Bedroom + office / wherever needed'),
+      makeChore('Dust','Cleaning',7,'days','regular','either','completion',2,'Often paired with Wipe Surfaces'),
+      makeChore('Wipe Surfaces','Cleaning',7,'days','regular','either','completion',2,'Non-kitchen • bedroom + office • often paired with Dust'),
+      makeChore('Clean Under the Bed','Cleaning',2,'weeks','regular','either','completion',8,'Trash, toys, hair + dust bunnies'),
+
+      // Household organization / routine
+      makeChore('Organize Junk Drawer','Maintenance / Routine',2,'weeks','low','either','completion',10,'Bedroom TV catch-all drawer'),
+      makeChore('Organize Products','Maintenance / Routine',1,'months','low','either','completion',21,'Product storage areas'),
+      makeChore('Organize Office Closet','Maintenance / Routine',2,'months','low','either','completion',45,'Go through + move things to storage if needed'),
+      makeChore('Empty Trashes','Maintenance / Routine',7,'days','regular','either','completion',3,'Consolidate household trash cans'),
+
+      // Pets
+      makeChore('Kitty Litter','Pets',2,'days','essential','either','completion',0,'Two litter boxes • 3 cats'),
+      makeChore('Wash & Fill Water Bowls','Pets',7,'days','essential','either','completion',5,'Two large gravity water bowls'),
+      makeChore('Clean Oakley Kennel','Pets',2,'weeks','regular','either','completion',12,'Wash blankets, wipe down + go through toys'),
+
+      // Laundry
+      makeChore('Wash Bedding','Laundry',7,'days','regular','either','completion',4,''),
+      makeChore('Wash Office Bedding','Laundry',1,'months','regular','either','completion',18,'Office throw blankets'),
+      makeChore('Laundry','Laundry',4,'days','regular','either','completion',1,'Clothes • roughly twice a week'),
+
+      // Deep-clean / occasional chores
+      makeChore('Clean Mini Fridge','Deep Clean',1,'months','low','either','completion',20,'Office mini fridge • toss old items + wipe down'),
+      makeChore('Wash Curtains','Deep Clean',3,'months','low','either','completion',60,''),
+      makeChore('Clean Windows','Deep Clean',2,'months','low','either','completion',35,'Windex inside of windows'),
+
+      // Maintenance / personal routine items
+      makeChore('Clean PC','Maintenance / Routine',2,'months','low','either','completion',45,'Take apart, dust + wipe down'),
+      makeChore('Go Through Closet','Maintenance / Routine',1,'months','low','either','completion',25,'Clothes • sell/donate what is not being worn'),
+      makeChore('Wash Water Bottle','Maintenance / Routine',3,'days','regular','either','completion',0,'Daily Owala bottle'),
+      makeChore('Change Filters','Maintenance / Routine',2,'months','regular','either','fixed',55,'Air purifier + A/C unit filter when in use'),
+      makeChore('Organize Office Entertainment Stand','Maintenance / Routine',1,'months','low','either','completion',16,'Office TV shelves • knickknacks + crafting items')
     ],
     instances: [],
     history: [],
     lastAutoPlanAt: null
   });
 
-  function makeChore(name, category, recurrenceValue, recurrenceUnit, importance, assignee, scheduleBehavior, areas='') {
-    const daysBack = Math.floor(Math.random()*5)+1;
+  // Default chores start with no fabricated completion history. starterDueInDays seeds
+  // the first planning cycle so Reset gives a usable week without claiming a chore
+  // was completed when it was not.
+  function makeChore(name, category, recurrenceValue, recurrenceUnit, importance, assignee, scheduleBehavior, starterDueInDays=0, areas='') {
+    const due = addDays(today(), Number(starterDueInDays)||0);
+    const anchor = new Date(due);
+    if (recurrenceUnit==='days') anchor.setDate(anchor.getDate()-Number(recurrenceValue));
+    if (recurrenceUnit==='weeks') anchor.setDate(anchor.getDate()-(7*Number(recurrenceValue)));
+    if (recurrenceUnit==='months') anchor.setMonth(anchor.getMonth()-Number(recurrenceValue));
     return {
       id: uid('chore'), name, category, recurrenceValue, recurrenceUnit, importance, assignee,
       scheduleBehavior, areas, graceOverride: null,
-      lastCompleted: toISO(addDays(today(), -daysBack)),
-      anchorDate: toISO(addDays(today(), -daysBack)),
+      lastCompleted: null,
+      anchorDate: toISO(anchor),
       active: true, createdAt: new Date().toISOString()
     };
   }
@@ -525,7 +554,7 @@
     document.querySelectorAll('[data-energy]').forEach(b=>b.addEventListener('click',()=>{energyMode=b.dataset.energy;document.querySelectorAll('[data-energy]').forEach(x=>x.classList.toggle('active',x===b));renderEnergySuggestions();}));
     document.getElementById('saveSettingsBtn').addEventListener('click',saveSettings);document.getElementById('pushCloudBtn').addEventListener('click',pushCloud);document.getElementById('pullCloudBtn').addEventListener('click',pullCloud);
     document.getElementById('exportBtn').addEventListener('click',exportData);document.getElementById('importInput').addEventListener('change',e=>{if(e.target.files?.[0])importData(e.target.files[0]);e.target.value='';});
-    document.getElementById('resetDemoBtn').addEventListener('click',()=>{if(confirm('Reset all chores, plans, and history to the starter set?')){state=starter();saveState('Reset complete');ensureAutoPlan();renderAll();}});
+    document.getElementById('resetDemoBtn').addEventListener('click',()=>{if(confirm('Reset chores, weekly plans, and history to your default chore list? Your app and cloud settings will be kept.')){const keptSettings=JSON.parse(JSON.stringify(state.settings||{}));state=starter();state.settings={...state.settings,...keptSettings,grace:{...state.settings.grace,...(keptSettings.grace||{})}};saveState('Default chores restored');ensureAutoPlan();renderAll();}});
   }
 
   bind(); ensureAutoPlan(); renderAll();
