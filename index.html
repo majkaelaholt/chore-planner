@@ -333,8 +333,8 @@
           <label>Week<select id="monthOrdinal"><option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option><option value="4">4th</option><option value="5">5th</option><option value="-1">Last</option></select></label>
           <label>Weekday<select id="monthWeekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
         </div>
-        <label>Start date <span class="optional">first due / schedule anchor</span><input id="startDate" type="date" required /></label>
-        <label>Next due <span class="optional">editable</span><span class="date-with-action"><input id="nextDueDate" type="date" required /><button type="button" class="mini-link" id="clearNextDueBtn">Use schedule</button></span></label>
+        <label>Start date <span class="optional">first eligible due / schedule anchor</span><input id="startDate" type="date" required /></label>
+        <label>Next due <span class="optional">current occurrence • editable override</span><span class="date-with-action"><input id="nextDueDate" type="date" required /><button type="button" class="mini-link" id="clearNextDueBtn">Use schedule</button></span></label>
         <label>Importance<select id="choreImportance"><option value="essential">Essential</option><option value="regular" selected>Regular</option><option value="low">Low stakes</option></select></label>
         <label>Grace override<input id="choreGrace" type="number" min="0" max="30" placeholder="Use default" /></label>
         <label>Schedule behavior<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select><span class="field-help" id="scheduleBehaviorHelp">Choose whether the interval restarts when you complete it.</span></label>

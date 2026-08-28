@@ -2,6 +2,13 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.11
+
+- Fixed calendar-based routines skipping their first Start-date occurrence when an older completion existed.
+- Added a one-time repair for v1.10 forecast moves where the next occurrence was moved backward onto the missing first occurrence.
+- Clarified Start date vs Next due override wording in the chore editor.
+- Bumped the PWA cache to `household-v1-11`.
+
 ## v1.10
 
 - Added **Default person** to Chores → Batch edit, with Mak / Ty / Either options.

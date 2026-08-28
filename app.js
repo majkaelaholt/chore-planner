@@ -17,7 +17,7 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 1.8,
+    version: 1.9,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -94,29 +94,54 @@
 
   function normalizeState(s) {
     const base = starter();
+    const chores = Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores;
     return {
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 1.8,
-      chores: Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores,
-      instances: normalizeInstancesForVersion(s.instances,s.version),
+      version: 1.9,
+      chores,
+      instances: normalizeInstancesForVersion(s.instances,s.version,chores),
       history: Array.isArray(s.history) ? s.history : [],
-      customDefault: normalizeDefaultSnapshot(s.customDefault)
+      customDefault: normalizeDefaultSnapshot(s.customDefault,s.version)
     };
   }
 
-  function normalizeInstancesForVersion(instances,sourceVersion=0){
-    const list=Array.isArray(instances)?instances:[];
-    if(Number(sourceVersion)>=1.8)return list;
-    const currentWeekEnd=toISO(endOfWeek(today()));
-    // Before v1.8, pressing Auto-plan created future-week instances that were
-    // indistinguishable from the forecast. Keep completed, one-off and manually
-    // moved/planned items, but let untouched future auto-plan rows fall back to
-    // the new continuous forecast model.
-    return list.filter(i=>{
-      if(i.completed||i.cancelled||i.oneOff||i.snoozed||i.plannedFromForecast||!i.choreId)return true;
-      return !i.scheduledDate||i.scheduledDate<=currentWeekEnd;
+  function normalizeInstancesForVersion(instances,sourceVersion=0,chores=[]){
+    let list=Array.isArray(instances)?instances.map(i=>({...i})):[];
+    if(Number(sourceVersion)<1.8){
+      const currentWeekEnd=toISO(endOfWeek(today()));
+      // Before v1.8, pressing Auto-plan created future-week instances that were
+      // indistinguishable from the forecast. Keep completed, one-off and manually
+      // moved/planned items, but let untouched future auto-plan rows fall back to
+      // the new continuous forecast model.
+      list=list.filter(i=>{
+        if(i.completed||i.cancelled||i.oneOff||i.snoozed||i.plannedFromForecast||!i.choreId)return true;
+        return !i.scheduledDate||i.scheduledDate<=currentWeekEnd;
+      });
+    }
+    if(Number(sourceVersion)<1.9) list=repairSkippedFirstCalendarOccurrences(list,chores);
+    return list;
+  }
+
+  function repairSkippedFirstCalendarOccurrences(instances,chores){
+    const byId=new Map((chores||[]).map(c=>[c.id,c]));
+    return instances.map(i=>{
+      if(i.completed||i.cancelled||!i.plannedFromForecast||!i.snoozed||!i.choreId||!i.originalDue||!i.scheduledDate)return i;
+      const chore=byId.get(i.choreId);
+      if(!chore||(chore.recurrenceType||'interval')==='interval')return i;
+      const start=chore.startDate||chore.anchorDate;
+      if(!start)return i;
+      const first=toISO(firstCalendarOccurrenceOnOrAfter(chore,parseISO(start)));
+      const second=toISO(firstCalendarOccurrenceOnOrAfter(chore,addDays(parseISO(first),1)));
+      // v1.10 could skip the first calendar occurrence when a chore had older
+      // completion history. If the user then moved the immediately-following
+      // forecast back onto that missing first date, restore it as that first
+      // occurrence so the following date remains in the forecast.
+      if(i.scheduledDate===first&&i.originalDue===second){
+        return {...i,originalDue:first,snoozed:false,repairedFirstOccurrence:true};
+      }
+      return i;
     });
   }
 
@@ -141,9 +166,24 @@
     return out;
   }
 
-  function normalizeDefaultSnapshot(snapshot){
+  function normalizeDefaultSnapshot(snapshot,sourceVersion=0){
     if(!snapshot||!Array.isArray(snapshot.chores)) return null;
-    return {...snapshot,chores:snapshot.chores.map(normalizeChore)};
+    let chores=snapshot.chores.map(normalizeChore);
+    if(Number(sourceVersion)<1.9&&snapshot.savedAt){
+      const savedDate=String(snapshot.savedAt).slice(0,10);
+      chores=chores.map(c=>{
+        if((c.recurrenceType||'interval')==='interval'||!c.nextDueOverride||!c.startDate||savedDate>=c.startDate)return c;
+        const first=toISO(firstCalendarOccurrenceOnOrAfter(c,parseISO(c.startDate)));
+        const second=toISO(firstCalendarOccurrenceOnOrAfter(c,addDays(parseISO(first),1)));
+        // Old custom-default snapshots could capture the skipped second
+        // calendar occurrence as Next due even when the default was saved
+        // before the first Start-date occurrence happened. Restore the first
+        // occurrence as the natural next due in that narrow case.
+        if(first===c.startDate&&c.nextDueOverride===second)return {...c,nextDueOverride:null};
+        return c;
+      });
+    }
+    return {...snapshot,chores};
   }
 
   function saveState(message='Saved') {
@@ -263,9 +303,15 @@
     const start=chore.startDate||chore.anchorDate||(chore.createdAt?chore.createdAt.slice(0,10):toISO(today()));
     const effectiveBehavior=chore.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore.scheduleBehavior;
     if(type!=='interval'){
-      if(!chore.lastCompleted&&!chore.lastDueSatisfied)return toISO(firstCalendarOccurrenceOnOrAfter(chore,parseISO(start)));
-      const after=maxISO(chore.lastDueSatisfied,chore.lastCompleted,start);
-      return toISO(firstCalendarOccurrenceOnOrAfter(chore,addDays(parseISO(after),1)));
+      const startDate=parseISO(start);
+      if(!chore.lastCompleted&&!chore.lastDueSatisfied)return toISO(firstCalendarOccurrenceOnOrAfter(chore,startDate));
+      // Start date is the first eligible occurrence / schedule anchor, not an
+      // occurrence that has already been satisfied. Older completion history
+      // must not cause the start occurrence itself to be skipped.
+      const satisfied=maxISO(chore.lastDueSatisfied,chore.lastCompleted);
+      let searchFrom=satisfied?addDays(parseISO(satisfied),1):startDate;
+      if(searchFrom<startDate)searchFrom=startDate;
+      return toISO(firstCalendarOccurrenceOnOrAfter(chore,searchFrom));
     }
     if(!chore.lastCompleted)return start;
     if(effectiveBehavior!=='fixed')return toISO(addRecurrence(parseISO(chore.lastCompleted),chore));
