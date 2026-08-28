@@ -2,6 +2,17 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.8
+
+- Reworked Planner into one **continuous schedule** shared by Week / 2 Weeks / Month.
+- Week view now shows outlined forecast occurrences too; you no longer have to press Auto-plan just to see what is coming.
+- Removed the **Auto-plan week** button.
+- Moving a forecast turns only that occurrence into a solid plan. For completion-based chores, the planned date becomes the temporary anchor for later forecasts.
+- If the chore is actually completed early or late, later forecasts — and any future planned occurrences for that chore — shift by the same difference.
+- Forecast cards can be dragged on desktop or opened with ••• to pick a date/person.
+- Upgrading from v1.7 drops untouched future-week rows created by the old Auto-plan button so they do not override the new forecast; manually moved/snoozed plans are preserved.
+- Bumped the PWA cache to `household-v1-8`.
+
 ## v1.7
 
 - 2-week and month forecasts now project the **full future rhythm** for completion-based chores, not just the next known due date.
@@ -34,7 +45,7 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 
 - **Today view** only shows chores that belong to today and celebrates when the day is handled.
 - **Household Overview** visualizes maintenance freshness for Essential chores by default, with an optional all-chore view and category statuses.
-- **Planner** has Week / 2 Weeks / Month views. Week auto-distributes due chores across their due date + grace window and supports drag-and-drop; zoomed-out views show planned chores plus due-date forecasts.
+- **Planner** has Week / 2 Weeks / Month views that all show the same continuous schedule. Solid cards are explicit plans; outlined cards are forecasts. Moving a forecast makes that occurrence a plan and re-anchors later completion-based forecasts.
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
 - **Mak / Ty / Either assignments** with automatic splitting for “Either” chores. If one person did a chore last time, the app prefers the other person next time.
 - **Recurring + one-off chores** in the same weekly planner.
@@ -80,7 +91,7 @@ Every recurring chore has:
 - a default assignee
 - a schedule behavior
 
-The weekly planner will **never pull a future chore earlier than its due date just to fill an empty day**. It chooses the least-busy day between the due date and the end of its grace window. If the chore is already overdue when the week begins, it lands on the first available day while retaining its original due date.
+The planner shows recurring chores continuously without requiring a generation step. Forecasts land on their expected due dates. You can drag/tap a forecast to intentionally move it within your week; that planned date becomes the temporary assumption for later completion-based occurrences. When you actually complete the chore, reality takes over and the future chain re-anchors again.
 
 ## Default chore library
 

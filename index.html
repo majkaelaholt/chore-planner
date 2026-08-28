@@ -146,13 +146,12 @@
           <div>
             <p class="eyebrow" id="plannerEyebrow">WEEKLY RESET</p>
             <h1 id="plannerTitle">Weekly Planner</h1>
-            <p class="page-subtitle" id="plannerSubtitle">Generate a sensible week, then drag things around until it feels right.</p>
+            <p class="page-subtitle" id="plannerSubtitle">See the expected rhythm, then move only the chores you want to plan differently.</p>
           </div>
           <div class="planner-actions">
             <button class="ghost-btn" id="prevWeekBtn" aria-label="Previous period">←</button>
             <button class="ghost-btn week-label" id="weekLabelBtn"></button>
             <button class="ghost-btn" id="nextWeekBtn" aria-label="Next period">→</button>
-            <button class="primary-btn" id="generateWeekBtn">Auto-plan week</button>
           </div>
         </div>
         <div class="planner-view-row">
@@ -161,13 +160,13 @@
             <button class="chip" data-planner-view="fortnight">2 Weeks</button>
             <button class="chip" data-planner-view="month">Month</button>
           </div>
-          <div class="planner-legend hidden" id="plannerLegend"><span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Due forecast</span></div>
+          <div class="planner-legend" id="plannerLegend"><span><i class="legend-solid"></i> Scheduled</span><span><i class="legend-outline"></i> Forecast</span></div>
         </div>
-        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> chores are scheduled on or after their due date, inside their grace window when possible. Future chores are not pulled forward just to fill empty days.</div>
+        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> every view shows the same continuous schedule. Outlined chores are forecasts; moving one turns it into a plan and shifts later completion-based forecasts from that planned date.</div>
         <div class="week-board" id="weekBoard"></div>
         <div class="planner-footer">
           <button class="secondary-btn" id="addOneOffBtn">＋ Add one-off chore</button>
-          <button class="secondary-btn" id="rebalanceBtn">↻ Rebalance remaining week</button>
+          <button class="secondary-btn" id="rebalanceBtn">↻ Balance planned chores</button>
         </div>
       </section>
 

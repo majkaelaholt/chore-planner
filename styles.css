@@ -377,3 +377,18 @@ select:disabled { opacity: .62; cursor: not-allowed; }
   .calendar-task-name { font-size: 8px; }
   .calendar-task-meta { display: none; }
 }
+
+/* v1.8 continuous planner forecasts */
+.planner-card.forecast-card {
+  background: rgba(255,255,255,.30);
+  border: 1px dashed #aaa095;
+  box-shadow: none;
+}
+.forecast-label,
+.forecast-due {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+.forecast-label { text-transform: uppercase; letter-spacing: .05em; }
+.forecast-due { margin-top: 5px; }
