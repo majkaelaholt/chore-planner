@@ -2,6 +2,13 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.12
+
+- Forecasted recurring chores now automatically become planned when their due day arrives.
+- If the app is first opened after the due day, that forecast is promoted into Today while preserving its original due date for grace/overdue status.
+- Manually moving or assigning a forecast still plans it early and continues to anchor later completion-based forecasts.
+- Removed the remaining automatic whole-week planning dependency; Week, 2 Weeks, and Month now all rely on the same continuous forecast/plan model.
+
 ## v1.11
 
 - Fixed calendar-based routines skipping their first Start-date occurrence when an older completion existed.

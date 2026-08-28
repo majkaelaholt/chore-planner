@@ -359,46 +359,33 @@
     return state.instances.find(i=>i.choreId===choreId && !i.completed && !i.cancelled);
   }
 
-  function ensureAutoPlan() {
-    carryForwardMissed();
-    const ws = startOfWeek(today());
-    const weekKey = toISO(ws);
-    const hasWeek = state.instances.some(i=>i.scheduledDate>=weekKey && i.scheduledDate<=toISO(endOfWeek(ws)) && !i.cancelled);
-    if (!hasWeek) autoPlanWeek(ws, false);
+  function ensureDueForecastsPlanned() {
+    const t=toISO(today());
+    let changed=false;
+    state.chores.filter(c=>c.active!==false).forEach(chore=>{
+      const due=nextDue(chore);
+      if(!due||due>t)return;
+      // If this occurrence was already explicitly planned/moved, leave that plan
+      // alone. Otherwise, the forecast becomes a real planner item once its due
+      // day arrives (or the next time the app opens after that day).
+      const represented=state.instances.some(i=>
+        i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||i.scheduledDate)===due
+      );
+      if(represented)return;
+      state.instances.push({
+        id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,
+        originalDue:due,scheduledDate:t,assignedTo:chooseAssignee(chore,startOfWeek(today())),
+        completed:false,completedAt:null,oneOff:false,snoozed:false,plannedFromForecast:true,
+        autoPromotedOnDue:true,carriedForward:due<t,createdAt:new Date().toISOString()
+      });
+      changed=true;
+    });
+    if(changed)saveState('');
   }
 
-  function autoPlanWeek(weekStart, notify=true, onlyMissing=true) {
-    const ws = startOfWeek(weekStart), we=endOfWeek(ws), wsIso=toISO(ws), weIso=toISO(we);
-    const loads = {};
-    for(let i=0;i<7;i++) loads[toISO(addDays(ws,i))]=state.instances.filter(x=>x.scheduledDate===toISO(addDays(ws,i))&&!x.completed&&!x.cancelled).length;
-
-    state.chores.filter(c=>c.active!==false).forEach(chore=>{
-      if (onlyMissing && getOpenRecurringInstance(chore.id)) return;
-      if (!onlyMissing) {
-        state.instances = state.instances.filter(i=>!(i.choreId===chore.id && !i.completed && !i.cancelled && i.scheduledDate>=wsIso && i.scheduledDate<=weIso));
-      }
-      let due = nextDue(chore);
-      const grace = getGrace(chore);
-      const graceEnd = toISO(addDays(parseISO(due),grace));
-      if (due > weIso) return;
-      let earliest = due < wsIso ? wsIso : due;
-      let latest = graceEnd < weIso ? graceEnd : weIso;
-      if (latest < wsIso) { earliest=wsIso; latest=wsIso; }
-      let candidates=[];
-      let cur=parseISO(earliest);
-      while (toISO(cur)<=latest) { candidates.push(toISO(cur)); cur=addDays(cur,1); }
-      if (!candidates.length) candidates=[wsIso];
-      candidates.sort((a,b)=>(loads[a]??0)-(loads[b]??0) || a.localeCompare(b));
-      const scheduled=candidates[0]; loads[scheduled]=(loads[scheduled]||0)+1;
-      state.instances.push({
-        id:uid('inst'), choreId:chore.id, name:chore.name, category:chore.category, importance:chore.importance,
-        originalDue:due, scheduledDate:scheduled, assignedTo:chooseAssignee(chore,ws), completed:false, completedAt:null,
-        oneOff:false, snoozed:false, createdAt:new Date().toISOString()
-      });
-    });
-    state.lastAutoPlanAt = new Date().toISOString();
-    saveState(notify?'Week planned':'');
-    renderAll();
+  function syncPlannerForToday() {
+    carryForwardMissed();
+    ensureDueForecastsPlanned();
   }
 
   function carryForwardMissed() {
@@ -490,6 +477,7 @@
   }
 
   function renderAll() {
+    syncPlannerForToday();
     renderPeopleSelects(); renderToday(); renderOverview(); renderPlanner(); renderChores(); renderHistory(); renderSettings();
   }
 
@@ -811,7 +799,7 @@
     if(plannerViewMode==='week'){
       title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='See the same expected schedule as Month view, then move only what you want to change.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
-      note.innerHTML='<strong>Continuous schedule:</strong> solid chores are scheduled for a specific day; outlined chores are forecasts. Drag an outlined chore or use ••• to choose another day. For completion-based chores, that scheduled day becomes the temporary anchor for later forecasts.';
+      note.innerHTML='<strong>Continuous schedule:</strong> outlined chores are future forecasts; solid chores are planned. A forecast automatically becomes planned when its due day arrives. Moving or assigning one plans it early and can shift later completion-based forecasts.';
       rebalance.classList.remove('hidden');
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
@@ -844,7 +832,7 @@
       return;
     }
     rebalance.classList.add('hidden');
-    note.innerHTML='<strong>Continuous schedule:</strong> solid chores are scheduled for a specific day; outlined chores are forecasts. Completion-based forecasts use a scheduled date when one exists, otherwise they assume completion on the due date. When the chore is actually completed early or late, later forecasts shift again from reality.';
+    note.innerHTML='<strong>Continuous schedule:</strong> outlined chores are forecasts until you plan them or their due day arrives. Completion-based forecasts use a planned date when one exists; actual completion then becomes the new anchor if it happens early or late.';
     if(plannerViewMode==='fortnight'){
       title.textContent='2-Week Planner';eyebrow.textContent='LOOK AHEAD';subtitle.textContent='See the same continuous schedule across two weeks without turning future chores into today’s obligations.';
       label.textContent=`${formatShort(period.start)} – ${formatShort(period.end)}`;
@@ -1184,7 +1172,7 @@
     const scheduleChanged=!existing||beforeSignature!==scheduleSignature(target);
     if(scheduleChanged){
       state.instances=state.instances.filter(i=>i.choreId!==target.id||i.completed||i.cancelled);
-      autoPlanWeek(startOfWeek(today()),false,true);
+      ensureDueForecastsPlanned();
     }else saveState(existing?'Chore updated':'Chore added');
     if(scheduleChanged)saveState(existing?'Chore schedule updated':'Chore added');
     document.getElementById('choreDialog').close();renderAll();
@@ -1324,14 +1312,14 @@
     if(hasCustom)fresh.chores=keptDefault.chores.map(c=>normalizeChore(JSON.parse(JSON.stringify(c))));
     fresh.settings={...fresh.settings,...keptSettings,grace:{...fresh.settings.grace,...(keptSettings.grace||{})}};
     fresh.customDefault=keptDefault;
-    state=fresh;selectedChoreIds.clear();saveState(hasCustom?'Saved default restored':'Built-in defaults restored');ensureAutoPlan();renderAll();
+    state=fresh;selectedChoreIds.clear();saveState(hasCustom?'Saved default restored':'Built-in defaults restored');renderAll();
   }
 
   function exportData(){
     const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`household-backup-${toISO(today())}.json`;a.click();URL.revokeObjectURL(url);toast('Backup exported');
   }
   async function importData(file){
-    try{const obj=JSON.parse(await file.text());state=normalizeState(obj);saveState('Backup imported');ensureAutoPlan();renderAll();}catch(e){toast('That backup could not be read');}
+    try{const obj=JSON.parse(await file.text());state=normalizeState(obj);saveState('Backup imported');renderAll();}catch(e){toast('That backup could not be read');}
   }
 
   function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2400);}
@@ -1386,6 +1374,6 @@
     document.getElementById('resetDemoBtn').addEventListener('click',resetToDefaults);
   }
 
-  bind(); ensureAutoPlan(); renderAll();
+  bind(); renderAll();
   if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
 })();
