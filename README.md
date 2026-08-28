@@ -2,6 +2,12 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.10
+
+- Added **Default person** to Chores → Batch edit, with Mak / Ty / Either options.
+- Batch person changes update the chore default and routine-generated upcoming plans, while preserving occurrences that were explicitly moved/planned.
+- Bumped the PWA cache to `household-v1-10`.
+
 ## v1.9
 
 - Planner weeks now run **Sunday through Saturday** in Week, 2 Weeks, and Month views.

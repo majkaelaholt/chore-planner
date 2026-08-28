@@ -987,7 +987,7 @@
     if(!selectedChoreIds.size) return;
     const category=document.getElementById('batchCategory');
     category.innerHTML='<option value="">No change</option>'+CATEGORIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
+    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchAssignee').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
     document.getElementById('batchTagsLabel').classList.add('hidden');
     document.getElementById('batchEditSummary').textContent=`Editing ${selectedChoreIds.size} selected chore${selectedChoreIds.size===1?'':'s'}. Only chosen fields will change.`;
     document.getElementById('batchEditDialog').showModal();
@@ -997,19 +997,27 @@
     const ids=new Set(selectedChoreIds);if(!ids.size)return;
     const category=document.getElementById('batchCategory').value;
     const importance=document.getElementById('batchImportance').value;
+    const assignee=document.getElementById('batchAssignee').value;
     const tagMode=document.getElementById('batchTagMode').value;
     const tags=normalizeTags(document.getElementById('batchTags').value);
-    if(!category&&!importance&&tagMode==='none'){toast('Choose something to change');return;}
+    if(!category&&!importance&&!assignee&&tagMode==='none'){toast('Choose something to change');return;}
     state.chores.forEach(c=>{
       if(!ids.has(c.id))return;
       if(category)c.category=category;
       if(importance)c.importance=importance;
+      if(assignee)c.assignee=assignee;
       const current=normalizeTags(c.tags);
       if(tagMode==='replace')c.tags=tags;
       if(tagMode==='clear')c.tags=[];
       if(tagMode==='add')c.tags=normalizeTags([...current,...tags]);
       if(tagMode==='remove'){const remove=new Set(tags.map(tagKey));c.tags=current.filter(t=>!remove.has(tagKey(t)));}
-      state.instances.filter(i=>i.choreId===c.id&&!i.completed).forEach(i=>{i.category=c.category;i.importance=c.importance;});
+      state.instances.filter(i=>i.choreId===c.id&&!i.completed).forEach(i=>{
+        i.category=c.category;i.importance=c.importance;
+        // A batch change to the default person should update routine-generated
+        // upcoming plans, while preserving occurrences the user explicitly
+        // moved/planned (those may intentionally be assigned differently).
+        if(assignee&&!i.snoozed&&!i.plannedFromForecast)i.assignedTo=assignee;
+      });
     });
     const count=ids.size;selectedChoreIds.clear();
     saveState(`${count} chore${count===1?'':'s'} updated`);document.getElementById('batchEditDialog').close();renderAll();
@@ -1047,6 +1055,7 @@
     const [p1,p2]=currentPeople();
     const opts=`<option value="either">Either</option><option value="person1">${esc(p1)}</option><option value="person2">${esc(p2)}</option>`;
     ['choreAssignee','oneOffAssignee','moveAssignee'].forEach(id=>{const el=document.getElementById(id); if(el){const old=el.value;el.innerHTML=opts;if([...el.options].some(o=>o.value===old))el.value=old;}});
+    const batchAssignee=document.getElementById('batchAssignee');if(batchAssignee){const old=batchAssignee.value;batchAssignee.innerHTML=`<option value="">No change</option>${opts}`;if([...batchAssignee.options].some(o=>o.value===old))batchAssignee.value=old;}
     const completed=document.getElementById('completedBy');if(completed){const old=completed.value;completed.innerHTML=`<option value="person1">${esc(p1)}</option><option value="person2">${esc(p2)}</option>`;if(old)completed.value=old;}
     const catOpts=CATEGORIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
     ['choreCategory','oneOffCategory'].forEach(id=>{const el=document.getElementById(id);if(el&&!el.options.length)el.innerHTML=catOpts;});
