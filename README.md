@@ -2,6 +2,11 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.14
+
+- Removed **Balance planned chores** from the Planner. Planned dates now stay entirely under your direct control unless the normal recurrence/reflow logic changes them.
+- Bumped the PWA cache to `household-v1-14`.
+
 ## v1.13
 
 - Reworked the planner around three separate dates: **Due** (routine rhythm), **Planned** (your current intention), and **Completed** (what actually happened).

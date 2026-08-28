@@ -896,7 +896,6 @@
     const subtitle=document.getElementById('plannerSubtitle');
     const note=document.getElementById('plannerNote');
     const legend=document.getElementById('plannerLegend');
-    const rebalance=document.getElementById('rebalanceBtn');
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.classList.toggle('active',b.dataset.plannerView===plannerViewMode));
     legend.classList.remove('hidden');
     legend.innerHTML=`<span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-person1"></i> ${esc(personLabel('person1'))}</span><span><i class="legend-person2"></i> ${esc(personLabel('person2'))}</span><span><i class="legend-either"></i> Either</span><span>📌 Pinned</span>`;
@@ -904,7 +903,6 @@
       title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Due is the routine. Planned is your intention. Completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
       note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are plans. If you move a completion-based chore, later plans follow that assumption. If you actually finish it early or late, unpinned future plans shift again to match reality. 📌 pinned dates stay put.';
-      rebalance.classList.remove('hidden');
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
       for(let d=0;d<7;d++){
@@ -936,7 +934,6 @@
       }
       return;
     }
-    rebalance.classList.add('hidden');
     note.innerHTML='<strong>Continuous schedule:</strong> forecasts show the expected rhythm; plans show your current intention. Completion-based routines reflow from real completion dates, while pinned plans stay on their exact calendar date.';
     if(plannerViewMode==='fortnight'){
       title.textContent='2-Week Planner';eyebrow.textContent='LOOK AHEAD';subtitle.textContent='See the same continuous schedule across two weeks without turning future chores into today’s obligations.';
@@ -1365,28 +1362,6 @@
     if(!wrap.children.length) wrap.innerHTML='<div class="empty-state"><h3>Nothing useful to pull forward.</h3><p>That is a perfectly good reason to stop.</p></div>';
   }
 
-  function rebalanceRemainingWeek(){
-    const ws=startOfWeek(plannerWeekStart), we=endOfWeek(ws), todayIso=toISO(today());
-    const wsIso=toISO(ws),weIso=toISO(we);
-    const movable=state.instances.filter(i=>!i.completed&&!i.cancelled&&!i.pinned&&planDateOf(i)>=wsIso&&planDateOf(i)<=weIso&&planDateOf(i)>=todayIso);
-    const loadFor=date=>state.instances.filter(i=>!i.completed&&!i.cancelled&&i.id!==currentBalanceId&&planDateOf(i)===date).length;
-    let currentBalanceId=null;
-    movable.sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b))).forEach(i=>{
-      currentBalanceId=i.id;
-      const chore=choreById(i.choreId);const grace=chore?getGrace(chore):2;
-      const due=i.originalDue||planDateOf(i);
-      const earliest=maxISO(due,todayIso,wsIso);const latest=minISO(toISO(addDays(parseISO(due),grace)),weIso);
-      let candidates=[];for(let d=parseISO(earliest);toISO(d)<=latest;d=addDays(d,1))candidates.push(toISO(d));if(!candidates.length)candidates=[maxISO(todayIso,wsIso)];
-      candidates.sort((a,b)=>loadFor(a)-loadFor(b)||a.localeCompare(b));
-      const target=candidates[0],oldPlan=planDateOf(i);
-      if(target!==oldPlan){
-        setPlanDate(i,target);i.snoozed=Boolean(i.originalDue&&target!==i.originalDue);i.manualPlan=true;
-        if(chore)rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,target,'balance');
-      }
-    });
-    saveState('Planned chores balanced');renderAll();
-  }
-
   function maxISO(...xs){return xs.filter(Boolean).sort().slice(-1)[0];}
   function minISO(...xs){return xs.filter(Boolean).sort()[0];}
 
@@ -1505,7 +1480,6 @@
     document.getElementById('prevWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()-1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?-14:-7);renderPlanner();});
     document.getElementById('nextWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()+1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?14:7);renderPlanner();});
     document.getElementById('weekLabelBtn').addEventListener('click',()=>{plannerWeekStart=plannerViewMode==='month'?new Date(today().getFullYear(),today().getMonth(),1):startOfWeek(today());renderPlanner();});
-    document.getElementById('rebalanceBtn').addEventListener('click',rebalanceRemainingWeek);
     document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerPeriod().start),toISO(today()));document.getElementById('oneOffAssignee').value='either';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
     document.getElementById('saveOneOffBtn').addEventListener('click',e=>{e.preventDefault();addOneOff();});
     document.getElementById('energyBtn').addEventListener('click',()=>{energyMode='soon';document.querySelectorAll('[data-energy]').forEach(b=>b.classList.toggle('active',b.dataset.energy==='soon'));renderEnergySuggestions();document.getElementById('energyDialog').showModal();});
