@@ -12,10 +12,11 @@
   let choreSort = { key:'name', dir:'asc' };
   let selectedChoreIds = new Set();
   let energyMode = 'soon';
+  let overviewShowAll = false;
   let toastTimer;
 
   const starter = () => ({
-    version: 1.4,
+    version: 1.5,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -96,7 +97,7 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 1.4,
+      version: 1.5,
       chores: Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores,
       instances: Array.isArray(s.instances) ? s.instances : [],
       history: Array.isArray(s.history) ? s.history : [],
@@ -394,7 +395,7 @@
   }
 
   function renderAll() {
-    renderPeopleSelects(); renderToday(); renderPlanner(); renderChores(); renderHistory(); renderSettings();
+    renderPeopleSelects(); renderToday(); renderOverview(); renderPlanner(); renderChores(); renderHistory(); renderSettings();
   }
 
   function renderToday() {
@@ -420,6 +421,128 @@
   }
 
   function priorityScore(i){ const s=statusForInstance(i); return ({overdue:0,grace:1,due:2,planned:3}[s]??4)+(i.importance==='essential'?-0.2:i.importance==='low'?0.2:0); }
+
+
+  function estimatedCycleStart(chore, dueIso) {
+    if (chore.lastCompleted) return chore.lastCompleted;
+    const due=parseISO(dueIso);
+    const n=Math.max(1,Number(chore.recurrenceValue)||1);
+    const type=chore.recurrenceType||'interval';
+    let start=new Date(due);
+    if(type==='weekly') start=addDays(start,-7*n);
+    else if(type==='monthly-day'||type==='monthly-weekday') start.setMonth(start.getMonth()-n);
+    else if(chore.recurrenceUnit==='weeks') start=addDays(start,-7*n);
+    else if(chore.recurrenceUnit==='months') start.setMonth(start.getMonth()-n);
+    else start=addDays(start,-n);
+    return toISO(start);
+  }
+
+  function maintenanceState(chore) {
+    const dueIso=nextDue(chore);
+    const due=parseISO(dueIso);
+    const now=today();
+    const grace=Math.max(0,getGrace(chore));
+    const graceEnd=addDays(due,grace);
+    const startIso=estimatedCycleStart(chore,dueIso);
+    let start=parseISO(startIso);
+    if(start>=graceEnd) start=addDays(due,-Math.max(1,Math.round(recurrenceDays(chore))||1));
+    const total=Math.max(1,daysBetween(start,graceEnd));
+    const remaining=Math.max(0,Math.min(total,daysBetween(now,graceEnd)));
+    const freshness=Math.max(0,Math.min(100,Math.round((remaining/total)*100)));
+    let key,label;
+    if(now>graceEnd){key='overdue';label='Needs attention';}
+    else if(now>due){key='grace';label='Grace window';}
+    else if(sameDate(now,due)){key='due';label='Due';}
+    else if(freshness>=75){key='fresh';label='Fresh';}
+    else if(freshness>=40){key='on-track';label='On track';}
+    else {key='getting-close';label='Getting close';}
+    return {key,label,freshness,due:dueIso,graceEnd:toISO(graceEnd),cycleStart:toISO(start)};
+  }
+
+  function overviewSeverity(key){return ({fresh:0,'on-track':1,'getting-close':2,due:3,grace:4,overdue:5}[key]??0);}
+
+  function overviewSummaryFor(chores){
+    const essential=chores.filter(c=>c.importance==='essential');
+    if(!essential.length) return {tone:'good',title:'Household is in good shape',text:'No chores are currently marked Essential. Regular maintenance can stay on its normal schedule.'};
+    const states=essential.map(c=>maintenanceState(c));
+    const overdue=states.filter(s=>s.key==='overdue').length;
+    const needsNow=states.filter(s=>s.key==='due'||s.key==='grace').length;
+    const close=states.filter(s=>s.key==='getting-close').length;
+    if(overdue) return {tone:'attention',title:'Some maintenance is behind',text:`${overdue} important chore${overdue===1?' is':'s are'} past the grace window. Focus on that before worrying about anything upcoming.`};
+    if(needsNow) return {tone:'watch',title:needsNow===1?'One thing needs attention':'A couple things need attention',text:`${needsNow} important chore${needsNow===1?' has':'s have'} reached the due or grace window. The rest can wait.`};
+    if(close) return {tone:'good',title:'Household is in good shape',text:`Important chores are still on track. ${close} ${close===1?'is':'are'} getting closer to the normal maintenance window, but nothing needs doing early.`};
+    return {tone:'good',title:'Household is in good shape',text:'All important chores are comfortably within their normal maintenance windows.'};
+  }
+
+  function overviewMetaLine(chore,stateInfo){
+    const last=chore.lastCompleted?`Done ${relativeDate(chore.lastCompleted).toLowerCase()}`:'No completion logged yet';
+    const due=stateInfo.key==='overdue'?`Due ${formatShort(stateInfo.due)}`:stateInfo.key==='grace'?`Due ${formatShort(stateInfo.due)} • grace through ${formatShort(stateInfo.graceEnd)}`:`Due ${relativeDate(stateInfo.due).toLowerCase()}`;
+    return `${last} • ${due}`;
+  }
+
+  function openOverviewComplete(chore){
+    let inst=getOpenRecurringInstance(chore.id);
+    if(!inst){
+      inst={id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,originalDue:nextDue(chore),scheduledDate:toISO(today()),assignedTo:chooseAssignee(chore,startOfWeek(today())),completed:false,oneOff:false,overviewCompletion:true,createdAt:new Date().toISOString()};
+      state.instances.push(inst);saveState('');
+    }
+    openComplete(inst.id);
+  }
+
+  function renderOverview(){
+    const active=state.chores.filter(c=>c.active!==false);
+    const summary=overviewSummaryFor(active);
+    const summaryEl=document.getElementById('overviewSummary');
+    if(!summaryEl)return;
+    summaryEl.classList.remove('tone-good','tone-watch','tone-attention');summaryEl.classList.add(`tone-${summary.tone}`);
+    document.getElementById('overviewSummaryTitle').textContent=summary.title;
+    document.getElementById('overviewSummaryText').textContent=summary.text;
+    const toggle=document.getElementById('overviewToggleBtn');
+    toggle.textContent=overviewShowAll?'Show important only':'Show all chores';
+    document.getElementById('overviewListKicker').textContent=overviewShowAll?'ALL ACTIVE CHORES':'IMPORTANT CHORES';
+    document.getElementById('overviewListTitle').textContent=overviewShowAll?'Whole-house maintenance':'Household essentials';
+    document.getElementById('overviewListHelp').textContent=overviewShowAll?'The overview is informational — chores that are not due yet still belong to a future day.':'Bars drain as chores age. Grace days still count as an acceptable maintenance window.';
+
+    const chores=(overviewShowAll?active:active.filter(c=>c.importance==='essential')).slice().sort((a,b)=>{
+      const sa=maintenanceState(a),sb=maintenanceState(b);
+      return overviewSeverity(sb.key)-overviewSeverity(sa.key)||sa.due.localeCompare(sb.due)||a.name.localeCompare(b.name);
+    });
+    const list=document.getElementById('overviewChoreList');list.innerHTML='';
+    if(!chores.length){list.innerHTML='<div class="empty-state compact-empty"><h3>No important chores yet</h3><p>Mark a chore Essential if you want it represented in the default household overview.</p></div>';}
+    chores.forEach(chore=>{
+      const info=maintenanceState(chore);
+      const card=document.createElement('article');card.className=`overview-chore-card status-${info.key}`;
+      const openInst=getOpenRecurringInstance(chore.id);
+      card.innerHTML=`
+        <button class="overview-card-main" type="button" aria-expanded="false">
+          <div class="overview-card-top"><div><div class="overview-chore-name">${CATEGORY_EMOJI[chore.category]||'•'} ${esc(chore.name)}</div><div class="overview-chore-meta">${esc(overviewMetaLine(chore,info))}</div></div><span class="overview-status status-${info.key}">${esc(info.label)}</span></div>
+          <div class="freshness-track" aria-label="${esc(chore.name)} maintenance status: ${esc(info.label)}"><span class="freshness-fill status-${info.key}" style="width:${info.freshness}%"></span></div>
+        </button>
+        <div class="overview-details hidden">
+          <div class="overview-detail-grid">
+            <div><span>Last done</span><strong>${chore.lastCompleted?formatShort(chore.lastCompleted):'Not logged'}</strong></div>
+            <div><span>Rhythm</span><strong>${esc(recurrenceText(chore))}</strong></div>
+            <div><span>Due</span><strong>${formatShort(info.due)}</strong></div>
+            <div><span>Grace through</span><strong>${formatShort(info.graceEnd)}</strong></div>
+            ${openInst?`<div><span>Planned</span><strong>${formatShort(openInst.scheduledDate)} • ${esc(personLabel(openInst.assignedTo))}</strong></div>`:''}
+          </div>
+          <div class="overview-detail-actions"><button type="button" class="primary-btn overview-done">✓ Mark done</button>${openInst?'<button type="button" class="secondary-btn overview-snooze">Move / snooze</button>':''}<button type="button" class="text-btn overview-edit">Edit chore</button></div>
+        </div>`;
+      const main=card.querySelector('.overview-card-main'),details=card.querySelector('.overview-details');
+      main.addEventListener('click',()=>{const opening=details.classList.contains('hidden');details.classList.toggle('hidden',!opening);main.setAttribute('aria-expanded',String(opening));});
+      card.querySelector('.overview-done').addEventListener('click',()=>openOverviewComplete(chore));
+      card.querySelector('.overview-edit').addEventListener('click',()=>openChore(chore.id));
+      card.querySelector('.overview-snooze')?.addEventListener('click',()=>openMove(openInst.id));
+      list.appendChild(card);
+    });
+
+    const catList=document.getElementById('overviewCategoryList');catList.innerHTML='';
+    CATEGORIES.forEach(category=>{
+      const group=active.filter(c=>c.category===category);if(!group.length)return;
+      const worst=group.map(c=>maintenanceState(c)).sort((a,b)=>overviewSeverity(b.key)-overviewSeverity(a.key))[0];
+      const row=document.createElement('div');row.className='overview-category-row';row.innerHTML=`<span class="overview-category-name">${CATEGORY_EMOJI[category]||'•'} ${esc(category)}</span><span class="overview-category-state status-${worst.key}">${esc(worst.label)}</span>`;catList.appendChild(row);
+    });
+  }
 
   function todayTaskCard(i) {
     const el=document.createElement('div'); el.className='task-card';
@@ -915,6 +1038,7 @@
   function bind(){
     document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));
     document.getElementById('openPlannerBtn').addEventListener('click',()=>switchView('planner'));
+    document.getElementById('overviewToggleBtn').addEventListener('click',()=>{overviewShowAll=!overviewShowAll;renderOverview();});
     document.getElementById('addChoreBtn').addEventListener('click',()=>openChore());
     document.getElementById('choreSearch').addEventListener('input',renderChores);
     document.getElementById('importanceFilter').addEventListener('change',e=>{choreFilters.importance=e.target.value;renderChores();});

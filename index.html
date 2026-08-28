@@ -25,6 +25,7 @@
       </div>
       <nav class="desktop-nav">
         <button class="nav-btn active" data-view="today"><span>☀️</span> Today</button>
+        <button class="nav-btn" data-view="overview"><span>⌂</span> Overview</button>
         <button class="nav-btn" data-view="planner"><span>🗓️</span> Planner</button>
         <button class="nav-btn" data-view="chores"><span>🧽</span> Chores</button>
         <button class="nav-btn" data-view="history"><span>✓</span> History</button>
@@ -85,6 +86,56 @@
                 <p>Only look ahead if you genuinely want to.</p>
               </div>
               <button class="primary-btn" id="energyBtn">✨ I have energy for more</button>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-overview" aria-labelledby="overviewTitle">
+        <div class="page-head overview-head">
+          <div>
+            <p class="eyebrow">HOUSEHOLD HEALTH</p>
+            <h1 id="overviewTitle">Household Overview</h1>
+            <p class="page-subtitle">A calm look at how recently the household has been maintained — not another checklist to finish.</p>
+          </div>
+          <button class="secondary-btn" id="overviewToggleBtn">Show all chores</button>
+        </div>
+
+        <section class="overview-summary" id="overviewSummary" aria-live="polite">
+          <div class="overview-summary-icon" aria-hidden="true">🏡</div>
+          <div>
+            <p class="section-kicker">RIGHT NOW</p>
+            <h2 id="overviewSummaryTitle">Household is in good shape</h2>
+            <p id="overviewSummaryText">Important chores are within their normal maintenance windows.</p>
+          </div>
+        </section>
+
+        <div class="overview-layout">
+          <section class="panel overview-main-panel">
+            <div class="panel-head overview-panel-head">
+              <div>
+                <p class="section-kicker" id="overviewListKicker">IMPORTANT CHORES</p>
+                <h2 id="overviewListTitle">Household essentials</h2>
+                <p class="overview-help" id="overviewListHelp">Bars drain as chores age. Grace days still count as an acceptable maintenance window.</p>
+              </div>
+            </div>
+            <div id="overviewChoreList" class="overview-chore-list"></div>
+          </section>
+
+          <aside class="overview-side">
+            <section class="panel compact-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="section-kicker">BY CATEGORY</p>
+                  <h3>At a glance</h3>
+                </div>
+              </div>
+              <div id="overviewCategoryList" class="overview-category-list"></div>
+            </section>
+            <section class="panel overview-reminder-panel">
+              <p class="section-kicker">THE POINT</p>
+              <h3>This is not a score.</h3>
+              <p>A draining bar means a chore is getting closer to its normal maintenance time — not that you should do it early.</p>
             </section>
           </aside>
         </div>
@@ -242,6 +293,7 @@
 
     <nav class="mobile-nav" aria-label="Mobile navigation">
       <button class="mobile-nav-btn active" data-view="today"><span>☀️</span><small>Today</small></button>
+      <button class="mobile-nav-btn" data-view="overview"><span>⌂</span><small>Overview</small></button>
       <button class="mobile-nav-btn" data-view="planner"><span>🗓️</span><small>Planner</small></button>
       <button class="mobile-nav-btn" data-view="chores"><span>🧽</span><small>Chores</small></button>
       <button class="mobile-nav-btn" data-view="settings"><span>⚙️</span><small>More</small></button>

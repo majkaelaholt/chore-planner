@@ -2,9 +2,17 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.5
+
+- Added a calm **Household Overview** with freshness/deterioration bars.
+- Essential chores are shown by default; all chores are available only when intentionally expanded.
+- Added category-level maintenance status summaries and expandable chore details.
+- Overview status follows each chore's actual due date and grace window, with no visible percentages, scores, or streaks.
+
 ## What it does
 
 - **Today view** only shows chores that belong to today and celebrates when the day is handled.
+- **Household Overview** visualizes maintenance freshness for Essential chores by default, with an optional all-chore view and category statuses.
 - **Weekly planner** auto-distributes due chores across their due date + grace window, then supports drag-and-drop rearranging.
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
 - **Mak / Ty / Either assignments** with automatic splitting for “Either” chores. If one person did a chore last time, the app prefers the other person next time.
