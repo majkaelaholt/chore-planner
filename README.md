@@ -2,6 +2,17 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.6
+
+- Replaced the odd outline-house Overview glyph with a normal 🏡 icon.
+- Planner now has **Week / 2 Weeks / Month** view switching on the same page.
+- Week remains the detailed drag-and-drop planning view.
+- 2-week and month views provide a compact calendar forecast for seeing how occasional chores line up ahead of time.
+- Zoomed-out views distinguish **solid planned chores** from **outlined due-date forecasts**.
+- Tapping a day in 2-week/month view jumps directly into that week for detailed planning.
+- Completion-based routines only forecast their next known due date; fixed/calendar routines can project later exact occurrences without pretending future completion dates are known.
+- Bumped the PWA cache to `household-v1-6`.
+
 ## v1.5
 
 - Added a calm **Household Overview** with freshness/deterioration bars.
@@ -13,7 +24,7 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 
 - **Today view** only shows chores that belong to today and celebrates when the day is handled.
 - **Household Overview** visualizes maintenance freshness for Essential chores by default, with an optional all-chore view and category statuses.
-- **Weekly planner** auto-distributes due chores across their due date + grace window, then supports drag-and-drop rearranging.
+- **Planner** has Week / 2 Weeks / Month views. Week auto-distributes due chores across their due date + grace window and supports drag-and-drop; zoomed-out views show planned chores plus due-date forecasts.
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
 - **Mak / Ty / Either assignments** with automatic splitting for “Either” chores. If one person did a chore last time, the app prefers the other person next time.
 - **Recurring + one-off chores** in the same weekly planner.

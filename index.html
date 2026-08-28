@@ -17,7 +17,7 @@
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">⌂</div>
+        <div class="brand-mark" aria-hidden="true">🏡</div>
         <div>
           <div class="brand-title">Household</div>
           <div class="brand-subtitle">done enough for today</div>
@@ -25,7 +25,7 @@
       </div>
       <nav class="desktop-nav">
         <button class="nav-btn active" data-view="today"><span>☀️</span> Today</button>
-        <button class="nav-btn" data-view="overview"><span>⌂</span> Overview</button>
+        <button class="nav-btn" data-view="overview"><span>🏡</span> Overview</button>
         <button class="nav-btn" data-view="planner"><span>🗓️</span> Planner</button>
         <button class="nav-btn" data-view="chores"><span>🧽</span> Chores</button>
         <button class="nav-btn" data-view="history"><span>✓</span> History</button>
@@ -144,18 +144,26 @@
       <section class="view" id="view-planner" aria-labelledby="plannerTitle">
         <div class="page-head planner-head">
           <div>
-            <p class="eyebrow">WEEKLY RESET</p>
+            <p class="eyebrow" id="plannerEyebrow">WEEKLY RESET</p>
             <h1 id="plannerTitle">Weekly Planner</h1>
-            <p class="page-subtitle">Generate a sensible week, then drag things around until it feels right.</p>
+            <p class="page-subtitle" id="plannerSubtitle">Generate a sensible week, then drag things around until it feels right.</p>
           </div>
           <div class="planner-actions">
-            <button class="ghost-btn" id="prevWeekBtn" aria-label="Previous week">←</button>
+            <button class="ghost-btn" id="prevWeekBtn" aria-label="Previous period">←</button>
             <button class="ghost-btn week-label" id="weekLabelBtn"></button>
-            <button class="ghost-btn" id="nextWeekBtn" aria-label="Next week">→</button>
+            <button class="ghost-btn" id="nextWeekBtn" aria-label="Next period">→</button>
             <button class="primary-btn" id="generateWeekBtn">Auto-plan week</button>
           </div>
         </div>
-        <div class="planner-note"><strong>Planning rule:</strong> chores are scheduled on or after their due date, inside their grace window when possible. Future chores are not pulled forward just to fill empty days.</div>
+        <div class="planner-view-row">
+          <div class="segmented planner-view-switch" id="plannerViewSwitch" aria-label="Planner view">
+            <button class="chip active" data-planner-view="week">Week</button>
+            <button class="chip" data-planner-view="fortnight">2 Weeks</button>
+            <button class="chip" data-planner-view="month">Month</button>
+          </div>
+          <div class="planner-legend hidden" id="plannerLegend"><span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Due forecast</span></div>
+        </div>
+        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> chores are scheduled on or after their due date, inside their grace window when possible. Future chores are not pulled forward just to fill empty days.</div>
         <div class="week-board" id="weekBoard"></div>
         <div class="planner-footer">
           <button class="secondary-btn" id="addOneOffBtn">＋ Add one-off chore</button>
@@ -293,7 +301,7 @@
 
     <nav class="mobile-nav" aria-label="Mobile navigation">
       <button class="mobile-nav-btn active" data-view="today"><span>☀️</span><small>Today</small></button>
-      <button class="mobile-nav-btn" data-view="overview"><span>⌂</span><small>Overview</small></button>
+      <button class="mobile-nav-btn" data-view="overview"><span>🏡</span><small>Overview</small></button>
       <button class="mobile-nav-btn" data-view="planner"><span>🗓️</span><small>Planner</small></button>
       <button class="mobile-nav-btn" data-view="chores"><span>🧽</span><small>Chores</small></button>
       <button class="mobile-nav-btn" data-view="settings"><span>⚙️</span><small>More</small></button>

@@ -7,6 +7,7 @@
   const importanceLabel = {essential:'Essential', regular:'Regular', low:'Low stakes'};
   const dayMs = 86400000;
   let plannerWeekStart = startOfWeek(new Date());
+  let plannerViewMode = 'week';
   let activeCategory = 'All';
   let choreFilters = { importance:'all', assignee:'all', tag:'all', status:'all' };
   let choreSort = { key:'name', dir:'asc' };
@@ -16,7 +17,7 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 1.5,
+    version: 1.6,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -97,7 +98,7 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 1.5,
+      version: 1.6,
       chores: Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores,
       instances: Array.isArray(s.instances) ? s.instances : [],
       history: Array.isArray(s.history) ? s.history : [],
@@ -559,23 +560,157 @@
   }
   function recurrenceNote(i){ const c=choreById(i.choreId); return c?recurrenceText(c):'One-off'; }
 
-  function renderPlanner() {
-    const ws=startOfWeek(plannerWeekStart), we=endOfWeek(ws);
-    document.getElementById('weekLabelBtn').textContent=`${formatShort(ws)} – ${formatShort(we)}`;
-    const board=document.getElementById('weekBoard'); board.innerHTML='';
-    for(let d=0;d<7;d++){
-      const date=addDays(ws,d), iso=toISO(date);
-      const items=state.instances.filter(i=>i.scheduledDate===iso&&!i.cancelled).sort((a,b)=>Number(a.completed)-Number(b.completed)||priorityScore(a)-priorityScore(b));
-      const col=document.createElement('section'); col.className='day-column'+(sameDate(date,today())?' today':''); col.dataset.date=iso;
-      const load=items.filter(i=>!i.completed).length;
-      const loadText=load<=1?'Light':load<=3?'Normal':'Busy';
-      col.innerHTML=`<div class="day-head"><div><div class="day-name">${date.toLocaleDateString(undefined,{weekday:'short'})}</div><div class="day-date">${date.getDate()}</div></div><div class="load-label">${load?loadText:'Clear'}</div></div><div class="day-tasks"></div>`;
-      const wrap=col.querySelector('.day-tasks'); items.forEach(i=>wrap.appendChild(plannerCard(i)));
-      col.addEventListener('dragover',e=>{e.preventDefault();col.classList.add('drag-over');});
-      col.addEventListener('dragleave',()=>col.classList.remove('drag-over'));
-      col.addEventListener('drop',e=>{e.preventDefault();col.classList.remove('drag-over');const id=e.dataTransfer.getData('text/plain');if(id)moveInstance(id,iso,instanceById(id)?.assignedTo||'either');});
-      board.appendChild(col);
+  function plannerPeriod(){
+    const anchor=parseDateish(plannerWeekStart);
+    if(plannerViewMode==='month'){
+      const monthStart=new Date(anchor.getFullYear(),anchor.getMonth(),1);
+      const monthEnd=new Date(anchor.getFullYear(),anchor.getMonth()+1,0);
+      return {start:monthStart,end:monthEnd,gridStart:startOfWeek(monthStart),gridEnd:endOfWeek(monthEnd)};
     }
+    const start=startOfWeek(anchor);
+    return {start,end:addDays(start,plannerViewMode==='fortnight'?13:6),gridStart:start,gridEnd:addDays(start,plannerViewMode==='fortnight'?13:6)};
+  }
+
+  function advanceProjectedDue(chore,dueIso){
+    const type=chore.recurrenceType||'interval';
+    if(type==='interval') return toISO(addRecurrence(parseISO(dueIso),chore));
+    return toISO(firstCalendarOccurrenceOnOrAfter(chore,addDays(parseISO(dueIso),1)));
+  }
+
+  function projectedDueDates(chore,startIso,endIso){
+    if(chore.active===false) return [];
+    let due=nextDue(chore);
+    if(!due) return [];
+    const type=chore.recurrenceType||'interval';
+    const effectiveBehavior=chore.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore.scheduleBehavior;
+    const canProjectRepeats=type!=='interval'||effectiveBehavior==='fixed';
+    const out=[];
+    let guard=0;
+    if(chore.nextDueOverride && due<startIso) return out;
+    while(due<startIso && canProjectRepeats && guard++<400) due=advanceProjectedDue(chore,due);
+    if(due<startIso) return out;
+    while(due<=endIso && guard++<400){
+      out.push(due);
+      if(chore.nextDueOverride || !canProjectRepeats) break;
+      const next=advanceProjectedDue(chore,due);
+      if(!next||next<=due) break;
+      due=next;
+    }
+    return out;
+  }
+
+  function plannerForecastMap(startIso,endIso){
+    const map=new Map();
+    const represented=new Set(state.instances.filter(i=>!i.cancelled&&i.choreId).map(i=>`${i.choreId}|${i.originalDue||i.scheduledDate}`));
+    state.chores.filter(c=>c.active!==false).forEach(chore=>{
+      projectedDueDates(chore,startIso,endIso).forEach(due=>{
+        if(represented.has(`${chore.id}|${due}`)) return;
+        if(!map.has(due)) map.set(due,[]);
+        map.get(due).push({preview:true,choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,dueDate:due});
+      });
+    });
+    return map;
+  }
+
+  function openPlannerWeekForDate(date){
+    plannerWeekStart=startOfWeek(date);
+    plannerViewMode='week';
+    renderPlanner();
+  }
+
+  function compactPlannerItem(item){
+    const btn=document.createElement('button');
+    btn.type='button';
+    if(item.preview){
+      btn.className='calendar-task forecast';
+      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">due</span>`;
+      btn.title=`${item.name} • due ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
+      btn.addEventListener('click',e=>{e.stopPropagation();openChore(item.choreId);});
+    } else {
+      btn.className='calendar-task planned'+(item.completed?' done':'');
+      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(item.completed?personLabel(item.completedBy):personLabel(item.assignedTo))}</span>`;
+      btn.title=item.completed?`${item.name} • completed by ${personLabel(item.completedBy)}`:`${item.name} • planned for ${formatShort(item.scheduledDate)}`;
+      btn.addEventListener('click',e=>{e.stopPropagation();item.completed?toast(`Completed by ${personLabel(item.completedBy)}`):openMove(item.id);});
+    }
+    return btn;
+  }
+
+  function renderCalendarPlanner(period){
+    const board=document.getElementById('weekBoard');
+    board.className=`calendar-board ${plannerViewMode==='month'?'month-board':'fortnight-board'}`;
+    board.innerHTML='';
+    const gridStart=period.gridStart,gridEnd=period.gridEnd;
+    const forecast=plannerForecastMap(toISO(gridStart),toISO(gridEnd));
+    const weekdays=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    weekdays.forEach(day=>{const h=document.createElement('div');h.className='calendar-weekday';h.textContent=day;board.appendChild(h);});
+    let date=new Date(gridStart);
+    while(date<=gridEnd){
+      const cellDate=new Date(date);
+      const iso=toISO(cellDate);
+      const actual=state.instances.filter(i=>i.scheduledDate===iso&&!i.cancelled).sort((a,b)=>Number(a.completed)-Number(b.completed)||priorityScore(a)-priorityScore(b));
+      const previews=(forecast.get(iso)||[]).sort((a,b)=>(a.importance==='essential'?0:a.importance==='regular'?1:2)-(b.importance==='essential'?0:b.importance==='regular'?1:2)||a.name.localeCompare(b.name));
+      const items=[...actual,...previews];
+      const outside=plannerViewMode==='month'&&cellDate.getMonth()!==period.start.getMonth();
+      const cell=document.createElement('section');
+      cell.className='calendar-day'+(sameDate(cellDate,today())?' today':'')+(outside?' outside-month':'');
+      cell.dataset.date=iso;
+      cell.innerHTML=`<button type="button" class="calendar-date-btn" aria-label="Open week of ${formatLong(iso)}"><span>${cellDate.getDate()}</span>${plannerViewMode==='fortnight'?`<small>${cellDate.toLocaleDateString(undefined,{month:'short'})}</small>`:''}</button><div class="calendar-items"></div>`;
+      const wrap=cell.querySelector('.calendar-items');
+      const limit=plannerViewMode==='month'?4:6;
+      items.slice(0,limit).forEach(item=>wrap.appendChild(compactPlannerItem(item)));
+      if(items.length>limit){
+        const more=document.createElement('button');more.type='button';more.className='calendar-more';more.textContent=`+${items.length-limit} more`;more.addEventListener('click',e=>{e.stopPropagation();openPlannerWeekForDate(cellDate);});wrap.appendChild(more);
+      }
+      cell.querySelector('.calendar-date-btn').addEventListener('click',e=>{e.stopPropagation();openPlannerWeekForDate(cellDate);});
+      cell.addEventListener('click',()=>openPlannerWeekForDate(cellDate));
+      board.appendChild(cell);
+      date=addDays(date,1);
+    }
+  }
+
+  function renderPlanner() {
+    const period=plannerPeriod();
+    const ws=startOfWeek(period.start);
+    const label=document.getElementById('weekLabelBtn');
+    const title=document.getElementById('plannerTitle');
+    const eyebrow=document.getElementById('plannerEyebrow');
+    const subtitle=document.getElementById('plannerSubtitle');
+    const note=document.getElementById('plannerNote');
+    const legend=document.getElementById('plannerLegend');
+    const generate=document.getElementById('generateWeekBtn');
+    const rebalance=document.getElementById('rebalanceBtn');
+    document.querySelectorAll('[data-planner-view]').forEach(b=>b.classList.toggle('active',b.dataset.plannerView===plannerViewMode));
+    if(plannerViewMode==='week'){
+      title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY RESET';subtitle.textContent='Generate a sensible week, then drag things around until it feels right.';
+      label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
+      note.innerHTML='<strong>Planning rule:</strong> chores are scheduled on or after their due date, inside their grace window when possible. Future chores are not pulled forward just to fill empty days.';
+      legend.classList.add('hidden');generate.classList.remove('hidden');rebalance.classList.remove('hidden');
+      const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
+      for(let d=0;d<7;d++){
+        const date=addDays(ws,d), iso=toISO(date);
+        const items=state.instances.filter(i=>i.scheduledDate===iso&&!i.cancelled).sort((a,b)=>Number(a.completed)-Number(b.completed)||priorityScore(a)-priorityScore(b));
+        const col=document.createElement('section'); col.className='day-column'+(sameDate(date,today())?' today':''); col.dataset.date=iso;
+        const load=items.filter(i=>!i.completed).length;
+        const loadText=load<=1?'Light':load<=3?'Normal':'Busy';
+        col.innerHTML=`<div class="day-head"><div><div class="day-name">${date.toLocaleDateString(undefined,{weekday:'short'})}</div><div class="day-date">${date.getDate()}</div></div><div class="load-label">${load?loadText:'Clear'}</div></div><div class="day-tasks"></div>`;
+        const wrap=col.querySelector('.day-tasks'); items.forEach(i=>wrap.appendChild(plannerCard(i)));
+        col.addEventListener('dragover',e=>{e.preventDefault();col.classList.add('drag-over');});
+        col.addEventListener('dragleave',()=>col.classList.remove('drag-over'));
+        col.addEventListener('drop',e=>{e.preventDefault();col.classList.remove('drag-over');const id=e.dataTransfer.getData('text/plain');if(id)moveInstance(id,iso,instanceById(id)?.assignedTo||'either');});
+        board.appendChild(col);
+      }
+      return;
+    }
+    legend.classList.remove('hidden');generate.classList.add('hidden');rebalance.classList.add('hidden');
+    note.innerHTML='<strong>Zoomed-out view:</strong> solid chores are already planned; outlined chores are due-date forecasts. Tap any day to open that week for detailed planning. Completion-based routines only forecast their next known due date.';
+    if(plannerViewMode==='fortnight'){
+      title.textContent='2-Week Planner';eyebrow.textContent='LOOK AHEAD';subtitle.textContent='See how the next two weeks line up without turning future chores into today’s obligations.';
+      label.textContent=`${formatShort(period.start)} – ${formatShort(period.end)}`;
+    } else {
+      title.textContent='Month Planner';eyebrow.textContent='MONTHLY VIEW';subtitle.textContent='Zoom out to spot how occasional and non-frequent chores line up across the month.';
+      label.textContent=period.start.toLocaleDateString(undefined,{month:'long',year:'numeric'});
+    }
+    renderCalendarPlanner(period);
   }
 
   function plannerCard(i){
@@ -1031,7 +1166,7 @@
   function switchView(name){
     document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));
     document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
-    if(name==='planner') plannerWeekStart=startOfWeek(plannerWeekStart);
+    if(name==='planner'&&plannerViewMode!=='month') plannerWeekStart=startOfWeek(plannerWeekStart);
     window.scrollTo({top:0,behavior:'smooth'});renderAll();
   }
 
@@ -1062,12 +1197,13 @@
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
     document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;completeInstance(id,document.getElementById('completedBy').value,choice);document.getElementById('completeDialog').close();});
     document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();moveInstance(document.getElementById('moveInstanceId').value,document.getElementById('moveDate').value,document.getElementById('moveAssignee').value);document.getElementById('moveDialog').close();});
-    document.getElementById('prevWeekBtn').addEventListener('click',()=>{plannerWeekStart=addDays(plannerWeekStart,-7);renderPlanner();});
-    document.getElementById('nextWeekBtn').addEventListener('click',()=>{plannerWeekStart=addDays(plannerWeekStart,7);renderPlanner();});
-    document.getElementById('weekLabelBtn').addEventListener('click',()=>{plannerWeekStart=startOfWeek(today());renderPlanner();});
+    document.querySelectorAll('[data-planner-view]').forEach(b=>b.addEventListener('click',()=>{plannerViewMode=b.dataset.plannerView;plannerWeekStart=plannerViewMode==='month'?new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth(),1):startOfWeek(plannerWeekStart);renderPlanner();}));
+    document.getElementById('prevWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()-1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?-14:-7);renderPlanner();});
+    document.getElementById('nextWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()+1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?14:7);renderPlanner();});
+    document.getElementById('weekLabelBtn').addEventListener('click',()=>{plannerWeekStart=plannerViewMode==='month'?new Date(today().getFullYear(),today().getMonth(),1):startOfWeek(today());renderPlanner();});
     document.getElementById('generateWeekBtn').addEventListener('click',()=>autoPlanWeek(plannerWeekStart,true,false));
     document.getElementById('rebalanceBtn').addEventListener('click',rebalanceRemainingWeek);
-    document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerWeekStart),toISO(today()));document.getElementById('oneOffAssignee').value='either';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
+    document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerPeriod().start),toISO(today()));document.getElementById('oneOffAssignee').value='either';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
     document.getElementById('saveOneOffBtn').addEventListener('click',e=>{e.preventDefault();addOneOff();});
     document.getElementById('energyBtn').addEventListener('click',()=>{energyMode='soon';document.querySelectorAll('[data-energy]').forEach(b=>b.classList.toggle('active',b.dataset.energy==='soon'));renderEnergySuggestions();document.getElementById('energyDialog').showModal();});
     document.querySelectorAll('[data-energy]').forEach(b=>b.addEventListener('click',()=>{energyMode=b.dataset.energy;document.querySelectorAll('[data-energy]').forEach(x=>x.classList.toggle('active',x===b));renderEnergySuggestions();}));
