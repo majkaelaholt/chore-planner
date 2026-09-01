@@ -430,3 +430,58 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .planner-card.assignee-person2 .assignee-dot::before { background: #8eaabd; }
 .planner-card.assignee-either .assignee-dot::before { background: #b6a78f; }
 .plan-history-note { font-size: 9px; color: var(--muted); margin-top: 5px; }
+
+/* v1.15 — real-life / capacity mode */
+.capacity-panel { background: linear-gradient(145deg, #f8f2ee, #efe4df); }
+.capacity-panel h3 { margin-bottom: 7px; }
+.capacity-panel p:not(.section-kicker) { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.recovery-nudge { border: 1px solid #dfd1c7; background: #faf5f1; border-radius: 14px; padding: 12px 13px; margin-bottom: 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.recovery-nudge > div { display: grid; gap: 3px; min-width: 0; }
+.recovery-nudge strong { font-size: 12px; }
+.recovery-nudge span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.capacity-modal { width: min(760px, calc(100vw - 28px)); }
+.capacity-copy { max-width: 640px; }
+.capacity-levels { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 16px 0 12px; }
+.capacity-level { border: 1px solid var(--line); background: #fffefa; border-radius: 14px; padding: 13px; display: flex; align-items: flex-start; gap: 10px; text-align: left; color: inherit; cursor: pointer; }
+.capacity-level:hover { border-color: #cbbcaf; }
+.capacity-level.active { border-color: #aa8f83; box-shadow: 0 0 0 2px rgba(170,143,131,.12); background: #faf5f1; }
+.capacity-level .capacity-icon { font-size: 20px; line-height: 1; }
+.capacity-level span:last-child { display: grid; gap: 4px; }
+.capacity-level strong { font-size: 12px; }
+.capacity-level small { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.capacity-rule-note { border-radius: 12px; background: var(--surface-2); padding: 10px 12px; font-size: 11px; line-height: 1.45; color: var(--muted); }
+.capacity-rule-note strong { color: var(--text); }
+.capacity-summary { margin: 15px 0 9px; font-size: 12px; color: var(--muted); }
+.capacity-summary strong { color: var(--text); }
+.capacity-plan-list { display: grid; gap: 9px; max-height: min(48vh, 440px); overflow: auto; padding-right: 3px; }
+.capacity-row { border: 1px solid var(--line); background: #fffefa; border-radius: 13px; padding: 11px 12px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; }
+.capacity-row.small-win { box-shadow: inset 3px 0 0 #b7a78f; }
+.capacity-row-main { min-width: 0; display: grid; gap: 4px; }
+.capacity-row-name { font-weight: 750; font-size: 12px; }
+.capacity-row-meta { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.capacity-row-meta .small-win-label { color: #7e6b50; font-weight: 750; }
+.capacity-row-controls { display: grid; grid-template-columns: minmax(118px,auto) 145px; gap: 7px; align-items: center; }
+.capacity-row-controls select, .capacity-row-controls input { min-width: 0; }
+.capacity-row-controls input.hidden-date { visibility: hidden; pointer-events: none; }
+.capacity-action-skip { color: #8a554e; }
+.move-extra-actions { display: flex; align-items: center; gap: 10px; margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--line); }
+.move-skip-help { color: var(--muted); font-size: 10px; line-height: 1.35; }
+.badge.skipped { background: #eee9df; color: #766b59; }
+.planner-card.skipped, .calendar-task.skipped { opacity: .58; filter: saturate(.65); }
+.planner-card.skipped .planner-card-title, .calendar-task.skipped .calendar-task-name { text-decoration: line-through; text-decoration-thickness: 1px; }
+.overview-chore-card.status-skipped .freshness-track { background: #eee9df; }
+.freshness-fill.status-skipped { background: #b8ac98; }
+.overview-status.status-skipped, .overview-category-state.status-skipped { background: #eee9df; color: #706552; }
+
+@media (max-width: 760px) {
+  .capacity-levels { grid-template-columns: 1fr; }
+  .capacity-row { grid-template-columns: 1fr; }
+  .capacity-row-controls { grid-template-columns: 1fr 1fr; }
+  .recovery-nudge { align-items: flex-start; flex-direction: column; }
+}
+
+.capacity-group-label { margin: 7px 2px 0; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.capacity-modal { max-height: calc(100vh - 24px); overflow: hidden; }
+.capacity-modal form { max-height: calc(100vh - 24px); display: flex; flex-direction: column; }
+.capacity-modal .capacity-plan-list { max-height: none; min-height: 100px; flex: 1 1 auto; overflow: auto; }
+.capacity-modal .modal-actions { flex: 0 0 auto; margin-top: 12px; padding-top: 8px; background: var(--surface); }

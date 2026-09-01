@@ -13,11 +13,13 @@
   let choreSort = { key:'name', dir:'asc' };
   let selectedChoreIds = new Set();
   let energyMode = 'soon';
+  let capacityMode = 'bare';
+  let capacityDraft = [];
   let overviewShowAll = false;
   let toastTimer;
 
   const starter = () => ({
-    version: 2.0,
+    version: 2.1,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -72,7 +74,7 @@
     const due = addDays(today(), Number(starterDueInDays)||0);
     return {
       id: uid('chore'), name, category, recurrenceType:'interval', recurrenceValue, recurrenceUnit, importance, assignee,
-      scheduleBehavior, areas, tags: [], graceOverride: null,
+      scheduleBehavior, dateMeaning:scheduleBehavior==='fixed'?'fixed':'target', areas, tags: [], graceOverride: null,
       lastCompleted: null, lastDueSatisfied: null,
       startDate: toISO(due), nextDueOverride: null,
       // anchorDate is kept for backward-compatible imports, but startDate is the v1.4 schedule anchor.
@@ -99,7 +101,7 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 2.0,
+      version: 2.1,
       chores,
       instances: normalizeInstancesForVersion(s.instances,s.version,chores),
       history: Array.isArray(s.history) ? s.history : [],
@@ -111,6 +113,9 @@
     let list=Array.isArray(instances)?instances.map(i=>({
       ...i,
       pinned: Boolean(i.pinned),
+      skipped: Boolean(i.skipped),
+      skippedAt: i.skippedAt||null,
+      skipSource: i.skipSource||null,
       manualPlan: Boolean(i.manualPlan||i.snoozed||i.plannedFromForecast),
       // v2 keeps the intended plan date intact when a chore becomes late.
       // Older versions sometimes carried a missed chore forward by overwriting
@@ -137,6 +142,9 @@
         // plannedDate is an explicit alias used by the v2 scheduling model.
         plannedDate:i.scheduledDate||i.plannedDate||i.originalDue||null,
         pinned:Boolean(i.pinned),
+        skipped:Boolean(i.skipped),
+        skippedAt:i.skippedAt||null,
+        skipSource:i.skipSource||null,
         manualPlan:Boolean(i.manualPlan||i.snoozed||i.plannedFromForecast)
       }));
     }
@@ -175,6 +183,9 @@
     out.monthWeekday=Number.isInteger(Number(out.monthWeekday))?Number(out.monthWeekday):0;
     out.nextDueOverride=out.nextDueOverride||null;
     out.lastDueSatisfied=out.lastDueSatisfied||null;
+    out.lastSkippedDue=out.lastSkippedDue||null;
+    out.lastRolledDue=out.lastRolledDue||null;
+    out.dateMeaning=out.dateMeaning||(((out.recurrenceType||'interval')==='interval'&&out.scheduleBehavior==='fixed')?'fixed':'target');
     if(!out.startDate){
       // v1.3 stored an anchor one interval before the first due date. Migrate that into a real first-due/start date.
       const legacyBase=out.anchorDate||out.lastCompleted||(out.createdAt?out.createdAt.slice(0,10):toISO(today()));
@@ -332,8 +343,15 @@
       if(searchFrom<startDate)searchFrom=startDate;
       return toISO(firstCalendarOccurrenceOnOrAfter(chore,searchFrom));
     }
-    if(!chore.lastCompleted)return start;
-    if(effectiveBehavior!=='fixed')return toISO(addRecurrence(parseISO(chore.lastCompleted),chore));
+    if(effectiveBehavior!=='fixed'){
+      let due=chore.lastCompleted?toISO(addRecurrence(parseISO(chore.lastCompleted),chore)):start;
+      // Skipping a completion-based cycle advances the expectation without
+      // pretending the chore was actually done. A real completion clears this.
+      const advancedThrough=maxISO(chore.lastSkippedDue,chore.lastRolledDue);
+      if(advancedThrough && advancedThrough>=due) due=toISO(addRecurrence(parseISO(advancedThrough),chore));
+      return due;
+    }
+    if(!chore.lastCompleted&&!chore.lastDueSatisfied)return start;
     const satisfied=maxISO(chore.lastDueSatisfied,chore.lastCompleted,start);
     let due=parseISO(start);
     while(due<=parseISO(satisfied))due=addRecurrence(due,chore);
@@ -366,7 +384,7 @@
     return normalized==='person1'?'assignee-person1':normalized==='person2'?'assignee-person2':'assignee-either';
   }
 
-  function completionHistoryFor(choreId) { return state.history.filter(h=>h.choreId===choreId).sort((a,b)=>b.completedAt.localeCompare(a.completedAt)); }
+  function completionHistoryFor(choreId) { return state.history.filter(h=>h.choreId===choreId&&h.completedAt&&h.action!=='skipped').sort((a,b)=>b.completedAt.localeCompare(a.completedAt)); }
   function chooseAssignee(chore, weekStart) {
     const explicit = normalizeAssignee(chore.assignee);
     if (explicit !== 'either') return explicit;
@@ -379,7 +397,7 @@
   }
 
   function getOpenRecurringInstance(choreId) {
-    return state.instances.find(i=>i.choreId===choreId && !i.completed && !i.cancelled);
+    return state.instances.find(i=>i.choreId===choreId && !i.completed && !i.skipped && !i.cancelled);
   }
 
   function planDateOf(i){
@@ -401,6 +419,23 @@
     return chore?.scheduleBehavior==='ask'?(chore.lastCompletionChoice||'completion'):chore?.scheduleBehavior;
   }
 
+  function isTerminalInstance(i){
+    return Boolean(i?.completed||i?.skipped||i?.cancelled);
+  }
+
+  // Completion-based interval routines are flexible targets. Calendar/fixed
+  // routines are true due dates. The distinction keeps structure without making
+  // a missed Saturday feel like the whole routine failed.
+  function routineDateWord(chore, lower=false){
+    const hard=chore && (chore.dateMeaning==='fixed'||(!chore.dateMeaning&&effectiveScheduleBehavior(chore)==='fixed'));
+    const word=hard?'Due':'Target';
+    return lower?word.toLowerCase():word;
+  }
+
+  function instanceRoutineWord(i, lower=false){
+    return routineDateWord(choreById(i?.choreId),lower);
+  }
+
   function ensureDueForecastsPlanned() {
     const t=toISO(today());
     let changed=false;
@@ -411,7 +446,7 @@
       // on the actual due date even if the app is opened later; Today can surface
       // missed plans without rewriting their intended date.
       const represented=state.instances.some(i=>
-        i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))===due
+        i.choreId===chore.id&&!i.completed&&!i.skipped&&!i.cancelled&&(i.originalDue||planDateOf(i))===due
       );
       if(represented)return;
       state.instances.push({
@@ -432,6 +467,7 @@
   function statusForInstance(i) {
     const t=toISO(today());
     if(i.completed) return 'done';
+    if(i.skipped) return 'skipped';
     if(!i.originalDue) return planDateOf(i)<t?'overdue':'planned';
     const chore=choreById(i.choreId);
     const grace=chore?getGrace(chore):2;
@@ -452,7 +488,7 @@
     if(effectiveScheduleBehavior(chore)==='fixed'||oldAssumedDate===newAssumedDate)return;
     const currentDue=currentInstance.originalDue||oldAssumedDate;
     const future=state.instances
-      .filter(i=>i.id!==currentInstance.id&&i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))>currentDue)
+      .filter(i=>i.id!==currentInstance.id&&i.choreId===chore.id&&!i.completed&&!i.skipped&&!i.cancelled&&(i.originalDue||planDateOf(i))>currentDue)
       .sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b)))
       .map(i=>({
         instance:i,
@@ -475,7 +511,7 @@
     const currentDue=currentInstance.originalDue||planDateOf(currentInstance);
     if(!currentDue)return;
     const future=state.instances
-      .filter(i=>i.id!==currentInstance.id&&i.choreId===chore.id&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))>currentDue)
+      .filter(i=>i.id!==currentInstance.id&&i.choreId===chore.id&&!i.completed&&!i.skipped&&!i.cancelled&&(i.originalDue||planDateOf(i))>currentDue)
       .sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b)))
       .map(i=>({instance:i,offset:daysBetween(i.originalDue||planDateOf(i),planDateOf(i)),oldPlan:planDateOf(i)}));
     let due=nextFixedIntervalAfter(chore,currentDue);
@@ -493,8 +529,14 @@
     const now=new Date();
     const actualDate=toISO(today());
     const intendedPlan=planDateOf(i)||actualDate;
+    // Recurring housework is not cumulative debt. If several earlier cycles of
+    // the same chore piled up, doing the chore once today covers those missed
+    // cycles instead of asking for three vacuums in a row.
+    const covered=i.choreId?state.instances.filter(x=>x.id!==i.id&&x.choreId===i.choreId&&!isTerminalInstance(x)&&x.originalDue&&x.originalDue<=actualDate):[];
+    covered.forEach(x=>{x.skipped=true;x.skippedAt=now.toISOString();x.skipSource='covered-by-completion';x.pinned=false;});
+    const satisfiedThrough=maxISO(i.originalDue,...covered.map(x=>x.originalDue));
     i.completed=true; i.completedAt=now.toISOString(); i.completedBy=completedBy;
-    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt:now.toISOString(), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan });
+    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt:now.toISOString(), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan, coveredCycles:covered.length });
     if(i.choreId){
       const chore=choreById(i.choreId);
       if(chore){
@@ -505,7 +547,9 @@
         if(behavior==='fixed')reflowFuturePlansToFixedRhythm(chore,i,'fixed-completion');
         else rebaseFuturePlansAfterAssumptionChange(chore,i,intendedPlan,actualDate,'completion');
         chore.lastCompleted=actualDate;
-        chore.lastDueSatisfied=i.originalDue||intendedPlan||actualDate;
+        chore.lastSkippedDue=null;
+        chore.lastRolledDue=null;
+        chore.lastDueSatisfied=satisfiedThrough||i.originalDue||intendedPlan||actualDate;
         chore.nextDueOverride=null;
         if((chore.recurrenceType||'interval')==='interval' && behavior!=='fixed') {
           chore.anchorDate=actualDate;
@@ -516,17 +560,47 @@
     renderAll();
   }
 
-  function moveInstance(id,date,assignee,pinned=false) {
-    const i=instanceById(id); if(!i) return;
+  function skipInstance(id,source='manual',silent=false){
+    const i=instanceById(id);if(!i||i.completed||i.skipped||i.cancelled)return;
+    const now=new Date();
+    const plan=planDateOf(i)||i.originalDue||toISO(today());
+    const cycleDue=i.originalDue||plan;
+    const chore=choreById(i.choreId);
+    rollOlderOpenCycles(i,'current-cycle-skipped');
+    i.skipped=true;
+    i.skippedAt=now.toISOString();
+    i.skipSource=source;
+    i.pinned=false;
+    state.history.push({
+      id:uid('hist'),action:'skipped',instanceId:i.id,choreId:i.choreId||null,name:i.name,category:i.category,
+      skippedAt:now.toISOString(),originallyDue:cycleDue,plannedFor:plan
+    });
+    if(chore){
+      const behavior=effectiveScheduleBehavior(chore);
+      if((chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'){
+        // A skipped completion-based cycle advances from the routine target,
+        // not from the day we happened to acknowledge the skip.
+        rebaseFuturePlansAfterAssumptionChange(chore,i,plan,cycleDue,'skip');
+      }
+      chore.lastSkippedDue=maxISO(chore.lastSkippedDue,cycleDue);
+      chore.lastDueSatisfied=maxISO(chore.lastDueSatisfied,cycleDue);
+      chore.nextDueOverride=null;
+    }
+    if(!silent){saveState('Skipped this occurrence');renderAll();}
+  }
+
+  function moveInstance(id,date,assignee,pinned=false,silent=false) {
+    const i=instanceById(id); if(!i||i.skipped) return;
     const oldPlan=planDateOf(i)||date;
     const chore=choreById(i.choreId);
+    rollOlderOpenCycles(i,'current-cycle-rescheduled');
     setPlanDate(i,date);
     i.assignedTo=assignee;
     i.snoozed=Boolean(i.originalDue&&date!==i.originalDue);
     i.manualPlan=true;
     i.pinned=Boolean(pinned);
     if(chore)rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,date,'plan');
-    saveState(i.pinned?'Plan pinned':'Plan updated'); renderAll();
+    if(!silent){saveState(i.pinned?'Plan pinned':'Plan updated'); renderAll();}
   }
 
   function forecastMoveKey(choreId,dueDate){ return `forecast|${choreId}|${dueDate}`; }
@@ -537,7 +611,7 @@
   }
   function scheduleForecast(choreId,dueDate,date,assignee,pinned=false){
     const chore=choreById(choreId);if(!chore)return;
-    let existing=state.instances.find(i=>i.choreId===choreId&&!i.completed&&!i.cancelled&&(i.originalDue||planDateOf(i))===dueDate);
+    let existing=state.instances.find(i=>i.choreId===choreId&&!i.completed&&!i.skipped&&!i.cancelled&&(i.originalDue||planDateOf(i))===dueDate);
     if(existing){
       const oldPlan=planDateOf(existing)||dueDate;
       setPlanDate(existing,date);existing.assignedTo=assignee;existing.snoozed=date!==dueDate;existing.manualPlan=true;existing.pinned=Boolean(pinned);
@@ -559,16 +633,52 @@
     renderPeopleSelects(); renderToday(); renderOverview(); renderPlanner(); renderChores(); renderHistory(); renderSettings();
   }
 
+  function todayOpenInstances(){
+    const t=toISO(today());
+    const raw=state.instances.filter(i=>!i.completed&&!i.skipped&&!i.cancelled&&planDateOf(i)&&planDateOf(i)<=t);
+    const recurring=new Map(),oneOff=[];
+    raw.forEach(i=>{
+      if(!i.choreId){oneOff.push(i);return;}
+      const current=recurring.get(i.choreId);
+      const key=i.originalDue||planDateOf(i);
+      const currentKey=current?(current.originalDue||planDateOf(current)):null;
+      if(!current||key>currentKey)recurring.set(i.choreId,i);
+    });
+    return [...recurring.values(),...oneOff];
+  }
+
+  function rollOlderOpenCycles(current,reason='rolled-forward'){
+    if(!current?.choreId||!current.originalDue)return;
+    const t=toISO(today());
+    if(current.originalDue>t)return;
+    const rolled=state.instances.filter(x=>x.id!==current.id&&x.choreId===current.choreId&&!isTerminalInstance(x)&&x.originalDue&&x.originalDue<current.originalDue&&x.originalDue<=t);
+    rolled.forEach(x=>{x.cancelled=true;x.rolledForward=true;x.rolledAt=new Date().toISOString();x.rollReason=reason;});
+    if(rolled.length){
+      const chore=choreById(current.choreId);const through=maxISO(...rolled.map(x=>x.originalDue));
+      if(chore){chore.lastRolledDue=maxISO(chore.lastRolledDue,through);chore.lastDueSatisfied=maxISO(chore.lastDueSatisfied,through);if(chore.nextDueOverride&&chore.nextDueOverride<=through)chore.nextDueOverride=null;}
+    }
+  }
+
   function renderToday() {
     const t=toISO(today());
     document.getElementById('todayDate').textContent=formatLong(t).toUpperCase();
     // An unfinished plan stays attached to the day Mak intended to do it, but
     // Today keeps surfacing it until it is completed or deliberately moved.
-    const open=state.instances.filter(i=>!i.completed&&!i.cancelled&&planDateOf(i)&&planDateOf(i)<=t);
+    const open=todayOpenInstances();
     const completed=state.instances.filter(i=>i.completed&&!i.cancelled&&String(i.completedAt||'').slice(0,10)===t);
+    const missed=open.filter(i=>planDateOf(i)<t);
+    const nudge=document.getElementById('recoveryNudge');
+    if(nudge){
+      const show=missed.length>=2||open.length>=5;
+      nudge.classList.toggle('hidden',!show);
+      const text=nudge.querySelector('span');
+      if(text&&show)text.textContent=`${missed.length?`${missed.length} earlier plan${missed.length===1?' is':'s are'} still hanging around. `:''}You can keep what matters, move the rest, or intentionally let a cycle go.`;
+    }
+    const heading=document.getElementById('todayPlanHeading');if(heading)heading.textContent=missed.length?'What still needs attention':'Household chores';
     const list=document.getElementById('todayTaskList'); list.innerHTML='';
     open.sort((a,b)=>priorityScore(a)-priorityScore(b)).forEach(i=>list.appendChild(todayTaskCard(i)));
-    document.getElementById('todayCount').textContent=`${open.length} left`;
+    const mineCount=open.filter(i=>i.assignedTo!=='person2').length;const tyCount=open.filter(i=>i.assignedTo==='person2').length;
+    document.getElementById('todayCount').textContent=tyCount&&mineCount?`${mineCount} ${personLabel('person1')}/Either • ${tyCount} ${personLabel('person2')}`:`${open.length} left`;
     document.getElementById('todayEmpty').classList.toggle('hidden',open.length!==0);
     const banner=document.getElementById('doneBanner'); banner.classList.toggle('hidden',open.length!==0);
     if(open.length===0){
@@ -610,18 +720,20 @@
     if(start>=graceEnd) start=addDays(due,-Math.max(1,Math.round(recurrenceDays(chore))||1));
     const total=Math.max(1,daysBetween(start,graceEnd));
     const remaining=Math.max(0,Math.min(total,daysBetween(now,graceEnd)));
-    const freshness=Math.max(0,Math.min(100,Math.round((remaining/total)*100)));
+    let freshness=Math.max(0,Math.min(100,Math.round((remaining/total)*100)));
     let key,label;
-    if(now>graceEnd){key='overdue';label='Needs attention';}
+    const skippedCycle=Boolean(chore.lastSkippedDue&&(!chore.lastCompleted||chore.lastSkippedDue>chore.lastCompleted)&&now<due);
+    if(skippedCycle){key='skipped';label='Skipped this cycle';freshness=Math.min(freshness,35);}
+    else if(now>graceEnd){key='overdue';label='Needs attention';}
     else if(now>due){key='grace';label='Grace window';}
-    else if(sameDate(now,due)){key='due';label='Due';}
+    else if(sameDate(now,due)){key='due';label=routineDateWord(chore);}
     else if(freshness>=75){key='fresh';label='Fresh';}
     else if(freshness>=40){key='on-track';label='On track';}
     else {key='getting-close';label='Getting close';}
-    return {key,label,freshness,due:dueIso,graceEnd:toISO(graceEnd),cycleStart:toISO(start)};
+    return {key,label,freshness,due:dueIso,graceEnd:toISO(graceEnd),cycleStart:toISO(start),skippedCycle};
   }
 
-  function overviewSeverity(key){return ({fresh:0,'on-track':1,'getting-close':2,due:3,grace:4,overdue:5}[key]??0);}
+  function overviewSeverity(key){return ({fresh:0,'on-track':1,skipped:1.5,'getting-close':2,due:3,grace:4,overdue:5}[key]??0);}
 
   function overviewSummaryFor(chores){
     const essential=chores.filter(c=>c.importance==='essential');
@@ -629,16 +741,20 @@
     const states=essential.map(c=>maintenanceState(c));
     const overdue=states.filter(s=>s.key==='overdue').length;
     const needsNow=states.filter(s=>s.key==='due'||s.key==='grace').length;
+    const skipped=states.filter(s=>s.key==='skipped').length;
     const close=states.filter(s=>s.key==='getting-close').length;
     if(overdue) return {tone:'attention',title:'Some maintenance is behind',text:`${overdue} important chore${overdue===1?' is':'s are'} past the grace window. Focus on that before worrying about anything upcoming.`};
-    if(needsNow) return {tone:'watch',title:needsNow===1?'One thing needs attention':'A couple things need attention',text:`${needsNow} important chore${needsNow===1?' has':'s have'} reached the due or grace window. The rest can wait.`};
+    if(needsNow) return {tone:'watch',title:needsNow===1?'One thing needs attention':'A couple things need attention',text:`${needsNow} important chore${needsNow===1?' has':'s have'} reached its current maintenance window. The rest can wait.`};
+    if(skipped) return {tone:'good',title:'Household is okay',text:`${skipped} important chore cycle${skipped===1?' was':'s were'} intentionally skipped. It is not pretending to be done — it will simply return at the next ${skipped===1?'target':'target'}.`};
     if(close) return {tone:'good',title:'Household is in good shape',text:`Important chores are still on track. ${close} ${close===1?'is':'are'} getting closer to the normal maintenance window, but nothing needs doing early.`};
     return {tone:'good',title:'Household is in good shape',text:'All important chores are comfortably within their normal maintenance windows.'};
   }
 
   function overviewMetaLine(chore,stateInfo){
     const last=chore.lastCompleted?`Done ${relativeDate(chore.lastCompleted).toLowerCase()}`:'No completion logged yet';
-    const due=stateInfo.key==='overdue'?`Due ${formatShort(stateInfo.due)}`:stateInfo.key==='grace'?`Due ${formatShort(stateInfo.due)} • grace through ${formatShort(stateInfo.graceEnd)}`:`Due ${relativeDate(stateInfo.due).toLowerCase()}`;
+    const word=routineDateWord(chore);
+    if(stateInfo.key==='skipped')return `Skipped ${formatShort(chore.lastSkippedDue)} • next ${word.toLowerCase()} ${formatShort(stateInfo.due)}`;
+    const due=stateInfo.key==='overdue'?`${word} ${formatShort(stateInfo.due)}`:stateInfo.key==='grace'?`${word} ${formatShort(stateInfo.due)} • grace through ${formatShort(stateInfo.graceEnd)}`:`${word} ${relativeDate(stateInfo.due).toLowerCase()}`;
     return `${last} • ${due}`;
   }
 
@@ -684,7 +800,7 @@
           <div class="overview-detail-grid">
             <div><span>Last done</span><strong>${chore.lastCompleted?formatShort(chore.lastCompleted):'Not logged'}</strong></div>
             <div><span>Rhythm</span><strong>${esc(recurrenceText(chore))}</strong></div>
-            <div><span>Due</span><strong>${formatShort(info.due)}</strong></div>
+            <div><span>${routineDateWord(chore)}</span><strong>${formatShort(info.due)}</strong></div>
             <div><span>Grace through</span><strong>${formatShort(info.graceEnd)}</strong></div>
             ${openInst?`<div><span>Planned</span><strong>${formatShort(planDateOf(openInst))} • ${esc(personLabel(openInst.assignedTo))}${openInst.pinned?' • 📌':''}</strong></div>`:''}
           </div>
@@ -709,7 +825,8 @@
   function todayTaskCard(i) {
     const el=document.createElement('div'); el.className='task-card';
     const status=statusForInstance(i);
-    const statusBadge=status==='overdue'?'<span class="badge overdue">Needs attention</span>':status==='grace'?'<span class="badge grace">Grace day</span>':'';
+    const flexible=instanceRoutineWord(i,true)==='target';
+    const statusBadge=status==='overdue'?`<span class="badge overdue">${flexible?'Past target':'Needs attention'}</span>`:status==='grace'?'<span class="badge grace">Grace window</span>':'';
     const dueNote=instanceTimingNote(i);
     el.innerHTML=`
       <button class="done-check" aria-label="Mark ${esc(i.name)} complete">✓</button>
@@ -723,10 +840,12 @@
     const planned=planDateOf(i);
     const due=i.originalDue;
     if(!due)return i.oneOff?(planned?`Planned ${relativeDate(planned).toLowerCase()}`:'One-off'):recurrenceNote(i);
-    if(!planned||planned===due)return `Due ${relativeDate(due).toLowerCase()}`;
+    const word=instanceRoutineWord(i);
+    if(i.recoveryFocusDate===toISO(today())&&planned&&planned<toISO(today()))return `Chosen for today • ${word.toLowerCase()} ${relativeDate(due).toLowerCase()}`;
+    if(!planned||planned===due)return `${word} ${relativeDate(due).toLowerCase()}`;
     const plannedText=relativeDate(planned).toLowerCase();
     const dueText=relativeDate(due).toLowerCase();
-    return planned<due?`Planned ${plannedText} • due ${dueText}`:`Due ${dueText} • planned ${plannedText}`;
+    return planned<due?`Planned ${plannedText} • ${word.toLowerCase()} ${dueText}`:`${word} ${dueText} • planned ${plannedText}`;
   }
   function recurrenceNote(i){ const c=choreById(i.choreId); return c?recurrenceText(c):'One-off'; }
 
@@ -754,7 +873,7 @@
   function openPlannedOccurrences(choreId){
     const byDue=new Map();
     state.instances
-      .filter(i=>i.choreId===choreId&&!i.completed&&!i.cancelled)
+      .filter(i=>i.choreId===choreId&&!i.completed&&!i.skipped&&!i.cancelled)
       .sort((a,b)=>(a.originalDue||planDateOf(a)).localeCompare(b.originalDue||planDateOf(b))||planDateOf(a).localeCompare(planDateOf(b)))
       .forEach(i=>{
         const key=i.originalDue||planDateOf(i);
@@ -842,14 +961,14 @@
     if(item.preview){
       btn.className=`calendar-task forecast ${assigneeClass(item.assignedTo)}`;
       btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(personLabel(item.assignedTo))}</span>`;
-      btn.title=`${item.name} • due ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
+      btn.title=`${item.name} • ${routineDateWord(choreById(item.choreId),true)} ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
       btn.addEventListener('click',e=>{e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
     } else {
       const owner=item.assignedTo||'either';
-      btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.pinned?' pinned':''}`;
-      btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
-      btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
-      btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else item.completed?toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`):openMove(item.id);});
+      btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.skipped?' skipped':''}${item.pinned?' pinned':''}`;
+      btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':item.skipped?(item.skipSource==='covered-by-completion'?'rolled forward':'skipped'):esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
+      btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.skipped?`${item.name} • ${item.skipSource==='covered-by-completion'?'covered by a later completion':'skipped this cycle'}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
+      btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — it will return at the next routine target');else item.completed?toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`):openMove(item.id);});
     }
     return btn;
   }
@@ -900,9 +1019,9 @@
     legend.classList.remove('hidden');
     legend.innerHTML=`<span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-person1"></i> ${esc(personLabel('person1'))}</span><span><i class="legend-person2"></i> ${esc(personLabel('person2'))}</span><span><i class="legend-either"></i> Either</span><span>📌 Pinned</span>`;
     if(plannerViewMode==='week'){
-      title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Due is the routine. Planned is your intention. Completed is what actually happened.';
+      title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Routine dates are targets unless they are truly fixed. Planned is your intention; completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
-      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are plans. If you move a completion-based chore, later plans follow that assumption. If you actually finish it early or late, unpinned future plans shift again to match reality. 📌 pinned dates stay put.';
+      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are plans. A target day gives you structure, not a contract. Miss it and you can still do the chore tomorrow, move it, or intentionally skip that cycle. 📌 pinned dates stay put.';
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
       for(let d=0;d<7;d++){
@@ -934,7 +1053,7 @@
       }
       return;
     }
-    note.innerHTML='<strong>Continuous schedule:</strong> forecasts show the expected rhythm; plans show your current intention. Completion-based routines reflow from real completion dates, while pinned plans stay on their exact calendar date.';
+    note.innerHTML='<strong>Continuous schedule:</strong> forecasts show the expected rhythm; plans show your current intention. Flexible targets reflow from real completion dates; fixed routines and 📌 pinned plans keep their exact calendar rhythm.';
     if(plannerViewMode==='fortnight'){
       title.textContent='2-Week Planner';eyebrow.textContent='LOOK AHEAD';subtitle.textContent='See the same continuous schedule across two weeks without turning future chores into today’s obligations.';
       label.textContent=`${formatShort(period.start)} – ${formatShort(period.end)}`;
@@ -947,17 +1066,17 @@
 
   function plannerCard(i){
     const owner=i.assignedTo||'either';
-    const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.historicalSeed; el.dataset.id=i.id;
+    const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.skipped?' skipped':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.skipped&&!i.historicalSeed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
     const plan=planDateOf(i);
     const completedDate=i.completedAt?String(i.completedAt).slice(0,10):null;
     const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
       ?`<div class="original-due">${overdue?'Overdue • ':''}due ${formatShort(i.originalDue)}</div>`
       :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
-    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span>${i.historicalSeed?'':`<button class="planner-card-menu" aria-label="Move or edit">•••</button>`}</div>${timing}`;
-    el.addEventListener('dragstart',e=>{if(!i.historicalSeed)e.dataTransfer.setData('text/plain',i.id);});
+    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span>${i.historicalSeed||i.skipped?'':`<button class="planner-card-menu" aria-label="Move or edit">•••</button>`}</div>${timing}`;
+    el.addEventListener('dragstart',e=>{if(!i.historicalSeed&&!i.skipped)e.dataTransfer.setData('text/plain',i.id);});
     el.querySelector('.planner-card-menu')?.addEventListener('click',()=>i.completed?toast(`Completed${i.completedBy?` by ${personLabel(i.completedBy)}`:''}`):openMove(i.id));
-    el.addEventListener('dblclick',()=>{if(!i.completed)openComplete(i.id);});
+    el.addEventListener('dblclick',()=>{if(!i.completed&&!i.skipped)openComplete(i.id);});
     return el;
   }
 
@@ -968,7 +1087,7 @@
     el.draggable=true;
     el.dataset.choreId=item.choreId;
     el.dataset.dueDate=item.dueDate;
-    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(personLabel(item.assignedTo))}</span><button class="planner-card-menu" aria-label="Plan this occurrence">•••</button></div><div class="forecast-due">due ${formatShort(item.dueDate)}</div>`;
+    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(personLabel(item.assignedTo))}</span><button class="planner-card-menu" aria-label="Plan this occurrence">•••</button></div><div class="forecast-due">${routineDateWord(chore,true)} ${formatShort(item.dueDate)}</div>`;
     el.title=chore?`${item.name} • ${recurrenceText(chore)}`:`${item.name} • forecast`;
     el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',forecastMoveKey(item.choreId,item.dueDate)));
     el.querySelector('.planner-card-menu').addEventListener('click',()=>openForecastMove(item.choreId,item.dueDate));
@@ -1076,18 +1195,19 @@
 
   function nextOpenPlanForChore(chore){
     const due=nextDue(chore);
-    const open=state.instances.filter(i=>i.choreId===chore.id&&!i.completed&&!i.cancelled);
+    const open=state.instances.filter(i=>i.choreId===chore.id&&!i.completed&&!i.skipped&&!i.cancelled);
     return open.find(i=>(i.originalDue||planDateOf(i))===due) || null;
   }
 
   function choreNextMarkup(chore){
     const due=nextDue(chore);
     const plan=nextOpenPlanForChore(chore);
-    if(!plan)return `<span>${esc(relativeDate(due))}</span>`;
+    const word=routineDateWord(chore);
+    if(!plan)return `<span>${esc(word)} ${esc(relativeDate(due).toLowerCase())}</span>`;
     const planned=planDateOf(plan);
     const planText=relativeDate(planned);
     const dueText=relativeDate(plan.originalDue||due);
-    return `<div class="chore-next-stack"><strong>${plan.pinned?'📌 ':''}Planned ${esc(planText.toLowerCase())}</strong><span>${planned===(plan.originalDue||due)?'Due same day':`Due ${esc(dueText.toLowerCase())}`}</span></div>`;
+    return `<div class="chore-next-stack"><strong>${plan.pinned?'📌 ':''}Planned ${esc(planText.toLowerCase())}</strong><span>${planned===(plan.originalDue||due)?`${word} same day`:`${word} ${esc(dueText.toLowerCase())}`}</span></div>`;
   }
 
   function renderChores(){
@@ -1191,9 +1311,10 @@
 
   function renderHistory(){
     const list=document.getElementById('historyList');list.innerHTML='';
-    const rows=state.history.slice().sort((a,b)=>b.completedAt.localeCompare(a.completedAt));
-    if(!rows.length){list.innerHTML='<div class="empty-state"><div class="empty-illustration">✓</div><h3>No history yet</h3><p>Completed chores will show up here.</p></div>';return;}
-    rows.forEach(h=>{const d=new Date(h.completedAt);const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}</div><div class="history-who">${esc(personLabel(h.completedBy))}</div>`;list.appendChild(row);});
+    const stamp=h=>h.completedAt||h.skippedAt||'';
+    const rows=state.history.slice().sort((a,b)=>stamp(b).localeCompare(stamp(a)));
+    if(!rows.length){list.innerHTML='<div class="empty-state"><div class="empty-illustration">✓</div><h3>No history yet</h3><p>Completed and intentionally skipped chore cycles will show up here.</p></div>';return;}
+    rows.forEach(h=>{const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);const d=new Date(stamp(h));const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}</div><div class="history-who">${skipped?'Intentional':esc(personLabel(h.completedBy))}</div>`;list.appendChild(row);});
   }
 
   function renderSettings(){
@@ -1242,7 +1363,7 @@
     document.getElementById('weeklyInterval').value=type==='weekly'?(c?.recurrenceValue||1):1;document.getElementById('weeklyDay').value=String(c?.weekday??0);
     document.getElementById('monthlyDayInterval').value=type==='monthly-day'?(c?.recurrenceValue||1):1;document.getElementById('monthDay').value=c?.monthDay||1;
     document.getElementById('monthlyWeekdayInterval').value=type==='monthly-weekday'?(c?.recurrenceValue||1):1;document.getElementById('monthOrdinal').value=String(c?.monthOrdinal??'1');document.getElementById('monthWeekday').value=String(c?.monthWeekday??0);
-    document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreGrace').value=c?.graceOverride??'';const behavior=document.getElementById('scheduleBehavior');behavior.value=type==='interval'?(c?.scheduleBehavior||'completion'):'fixed';behavior.dataset.intervalValue=type==='interval'?(c?.scheduleBehavior||'completion'):'completion';document.getElementById('lastCompleted').value=c?.lastCompleted||'';
+    document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreGrace').value=c?.graceOverride??'';const behavior=document.getElementById('scheduleBehavior');behavior.value=type==='interval'?(c?.scheduleBehavior||'completion'):'fixed';behavior.dataset.intervalValue=type==='interval'?(c?.scheduleBehavior||'completion'):'completion';document.getElementById('choreDateMeaning').value=c?.dateMeaning||(((type==='interval')&&(c?.scheduleBehavior==='fixed'))?'fixed':'target');document.getElementById('lastCompleted').value=c?.lastCompleted||'';
     const startDate=c?.startDate||toISO(today());document.getElementById('startDate').value=startDate;
     const nextInput=document.getElementById('nextDueDate');const shownNext=c?nextDue(c):startDate;nextInput.value=shownNext;nextInput.dataset.natural=c?nextDue(c,true):startDate;nextInput.dataset.hadOverride=c?.nextDueOverride?'1':'0';nextInput.dataset.userEdited='0';
     document.getElementById('choreTags').value=normalizeTags(c?.tags).join(', ');document.getElementById('choreAreas').value=c?.areas||'';setRecurrenceFields(type);d.showModal();
@@ -1282,7 +1403,7 @@
     const data={
       id:id||uid('chore'),name:document.getElementById('choreName').value.trim(),category:document.getElementById('choreCategory').value,
       assignee:document.getElementById('choreAssignee').value,...recurrence,
-      importance:document.getElementById('choreImportance').value,graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:recurrence.recurrenceType==='interval'?document.getElementById('scheduleBehavior').value:'fixed',
+      importance:document.getElementById('choreImportance').value,graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:recurrence.recurrenceType==='interval'?document.getElementById('scheduleBehavior').value:'fixed',dateMeaning:document.getElementById('choreDateMeaning').value||'target',
       lastCompleted:submittedLastCompleted,lastDueSatisfied:submittedLastDueSatisfied,tags:normalizeTags(document.getElementById('choreTags').value),areas:document.getElementById('choreAreas').value.trim(),active:true,
       startDate,nextDueOverride:null,anchorDate:startDate,createdAt:existing?.createdAt||new Date().toISOString()
     };
@@ -1295,7 +1416,7 @@
     const target=existing||data;
     const scheduleChanged=!existing||beforeSignature!==scheduleSignature(target);
     if(scheduleChanged){
-      state.instances=state.instances.filter(i=>i.choreId!==target.id||i.completed||i.cancelled);
+      state.instances=state.instances.filter(i=>i.choreId!==target.id||i.completed||i.skipped||i.cancelled);
       ensureDueForecastsPlanned();
     }else saveState(existing?'Chore updated':'Chore added');
     if(scheduleChanged)saveState(existing?'Chore schedule updated':'Chore added');
@@ -1319,17 +1440,28 @@
 
   function openMove(id){
     const i=instanceById(id); if(!i)return;
-    document.getElementById('moveInstanceId').value=id;document.getElementById('moveTaskName').textContent=i.name;document.getElementById('moveDueHint').textContent=i.originalDue?`Routine due: ${formatLong(i.originalDue)}`:'One-off chore';document.getElementById('moveDate').value=planDateOf(i);document.getElementById('moveAssignee').value=i.assignedTo||'either';document.getElementById('pinPlanDate').checked=Boolean(i.pinned);document.getElementById('moveDialog').showModal();
+    const chore=choreById(i.choreId);
+    document.getElementById('moveInstanceId').value=id;
+    document.getElementById('moveTaskName').textContent=i.name;
+    document.getElementById('moveDueHint').textContent=i.originalDue?`Routine ${routineDateWord(chore,true)}: ${formatLong(i.originalDue)}`:'One-off chore';
+    document.getElementById('moveDate').value=planDateOf(i);
+    document.getElementById('moveAssignee').value=i.assignedTo||'either';
+    document.getElementById('pinPlanDate').checked=Boolean(i.pinned);
+    const skipBtn=document.getElementById('skipOccurrenceBtn');skipBtn.classList.remove('hidden');
+    document.getElementById('moveSkipHelp').classList.remove('hidden');
+    document.getElementById('moveDialog').showModal();
   }
 
   function openForecastMove(choreId,dueDate){
     const chore=choreById(choreId);if(!chore)return;
     document.getElementById('moveInstanceId').value=forecastMoveKey(choreId,dueDate);
     document.getElementById('moveTaskName').textContent=chore.name;
-    document.getElementById('moveDueHint').textContent=`Routine due: ${formatLong(dueDate)}`;
+    document.getElementById('moveDueHint').textContent=`Routine ${routineDateWord(chore,true)}: ${formatLong(dueDate)}`;
     document.getElementById('moveDate').value=dueDate;
     document.getElementById('moveAssignee').value=chooseAssignee(chore,startOfWeek(parseISO(dueDate)));
     document.getElementById('pinPlanDate').checked=false;
+    document.getElementById('skipOccurrenceBtn').classList.add('hidden');
+    document.getElementById('moveSkipHelp').classList.add('hidden');
     document.getElementById('moveDialog').showModal();
   }
 
@@ -1340,18 +1472,181 @@
     saveState('One-off chore added');document.getElementById('oneOffDialog').close();document.getElementById('oneOffForm').reset();renderAll();
   }
 
+  function effortScoreForChore(chore){
+    if(!chore)return 2;
+    const tags=normalizeTags(chore.tags).map(tagKey);
+    const name=String(chore.name||'').toLowerCase();
+    if(tags.some(t=>['quick','easy','small win','small-win','5 min','5-minute'].includes(t)))return 1;
+    if(/water bottle|empty trash|trashes|kitty litter|litter|wipe surface|dust/.test(name))return 1;
+    if(chore.category==='Deep Clean'||/bedding|curtain|under the bed|kennel|closet|pc|windows|mini fridge/.test(name))return 3;
+    if(/kitchen|vacuum|laundry|water bowl/.test(name))return 2;
+    return 2;
+  }
+
+  function effortLabel(score){return score<=1?'Quick':score>=3?'Bigger':'Medium';}
+  function isSmallWinChore(chore){return effortScoreForChore(chore)===1;}
+
+  function capacityPriority(i,mode){
+    const chore=choreById(i.choreId);
+    const status=statusForInstance(i);
+    const age=Math.max(0,daysBetween(planDateOf(i)||i.originalDue||toISO(today()),toISO(today())));
+    let score=i.importance==='essential'?100:i.importance==='regular'?55:20;
+    if(status==='overdue')score+=28;else if(status==='grace')score+=16;
+    score+=Math.min(24,age*4);
+    if(i.pinned)score+=18;
+    if(isSmallWinChore(chore))score+=mode==='bare'?32:mode==='light'?18:8;
+    if(i.assignedTo==='person2')score-=1000;
+    return score;
+  }
+
+  function suggestedRecoveryDate(i,provisionalLoads={}){
+    const start=toISO(today());
+    const chore=choreById(i.choreId);
+    const existingLoads={};
+    state.instances.filter(x=>!isTerminalInstance(x)&&x.id!==i.id&&planDateOf(x)>start).forEach(x=>{
+      const d=planDateOf(x);existingLoads[d]=(existingLoads[d]||0)+1;
+    });
+    const graceEnd=i.originalDue&&chore?toISO(addDays(parseISO(i.originalDue),getGrace(chore))):null;
+    let best=null,bestPenalty=Infinity;
+    for(let offset=1;offset<=7;offset++){
+      const date=toISO(addDays(today(),offset));
+      const load=(existingLoads[date]||0)+(provisionalLoads[date]||0);
+      let penalty=load*12+offset;
+      if(graceEnd&&date<=graceEnd)penalty-=5;
+      if(chore&&routineDateWord(chore,true)==='due'&&i.originalDue&&date>i.originalDue)penalty+=2;
+      if(penalty<bestPenalty){bestPenalty=penalty;best=date;}
+    }
+    provisionalLoads[best]=(provisionalLoads[best]||0)+1;
+    return best;
+  }
+
+  function buildCapacityDraft(mode=capacityMode){
+    const t=toISO(today());
+    const open=todayOpenInstances();
+    const draft=open.map(i=>({instance:i,action:null,date:null,smallWin:false,reason:''}));
+    const mine=draft.filter(x=>x.instance.assignedTo!=='person2').sort((a,b)=>capacityPriority(b.instance,mode)-capacityPriority(a.instance,mode));
+    const ty=draft.filter(x=>x.instance.assignedTo==='person2');
+    ty.forEach(x=>{x.action='keep';x.reason=`Assigned to ${personLabel('person2')} — it does not count against your personal capacity.`;});
+
+    const maxTasks=mode==='bare'?2:mode==='light'?4:5;
+    const maxEffort=mode==='bare'?3:mode==='light'?6:9;
+    let usedTasks=0,usedEffort=0;
+    const kept=[];
+    mine.forEach(x=>{
+      const effort=effortScoreForChore(choreById(x.instance.choreId));
+      const canKeep=usedTasks<maxTasks && (usedEffort+effort<=maxEffort || (x.instance.importance==='essential'&&usedTasks===0));
+      if(canKeep){x.action='keep';kept.push(x);usedTasks++;usedEffort+=effort;}
+    });
+
+    // On a low-capacity day, deliberately preserve at least one genuinely small
+    // win when possible. It can be the only thing that makes starting feel doable.
+    if(mode!=='catchup'&&!kept.some(x=>isSmallWinChore(choreById(x.instance.choreId)))){
+      const quick=mine.find(x=>x.action!=='keep'&&isSmallWinChore(choreById(x.instance.choreId)));
+      if(quick){
+        const replace=kept.slice().reverse().find(x=>x.instance.importance!=='essential'&&!x.instance.pinned);
+        if(replace){replace.action=null;kept.splice(kept.indexOf(replace),1);}
+        if(kept.length<maxTasks){quick.action='keep';kept.push(quick);}
+      }
+    }
+    const small=kept.filter(x=>x.instance.assignedTo!=='person2').sort((a,b)=>effortScoreForChore(choreById(a.instance.choreId))-effortScoreForChore(choreById(b.instance.choreId)))[0];
+    if(small&&isSmallWinChore(choreById(small.instance.choreId))){small.smallWin=true;small.reason='Small win — intentionally chosen because starting small still counts.';}
+
+    const provisionalLoads={};
+    mine.filter(x=>!x.action).forEach(x=>{
+      const i=x.instance,chore=choreById(i.choreId);
+      if(i.pinned){x.action='keep';x.reason='Pinned plan — kept unless you choose otherwise.';return;}
+      if(i.importance==='essential'){
+        x.action='move';x.reason='Essential chores are moved, never auto-skipped.';
+      }else if(mode==='bare'){
+        const shortCycle=chore&&recurrenceDays(chore)<=10;
+        if(i.importance==='low'||(i.importance==='regular'&&shortCycle)){x.action='skip';x.reason='Suggested skip — this cycle can go without pretending it was completed.';}
+        else {x.action='move';x.reason='Moved to protect today’s limited capacity.';}
+      }else if(mode==='light'){
+        if(i.importance==='low'&&planDateOf(i)<t){x.action='skip';x.reason='Low-stakes missed cycle — safe candidate to let go.';}
+        else {x.action='move';x.reason='Spread out so today stays light.';}
+      }else{
+        x.action='move';x.reason='Catch-up mode keeps the chore but redistributes it.';
+      }
+      if(x.action==='move')x.date=suggestedRecoveryDate(i,provisionalLoads);
+    });
+    kept.forEach(x=>{if(!x.reason)x.reason=x.instance.assignedTo==='either'?'Kept as one of today’s most useful household tasks.':'Kept as one of today’s most useful tasks.';});
+    return draft;
+  }
+
+  function updateCapacitySummary(){
+    const el=document.getElementById('capacityPlanSummary');if(!el)return;
+    const counts={keep:0,move:0,skip:0};capacityDraft.forEach(x=>counts[x.action]=(counts[x.action]||0)+1);
+    const keepTy=capacityDraft.filter(x=>x.action==='keep'&&x.instance.assignedTo==='person2').length;
+    const keepMine=counts.keep-keepTy;
+    const small=capacityDraft.find(x=>x.smallWin&&x.action==='keep');
+    el.innerHTML=`<strong>${keepMine} in your plan today</strong>${keepTy?` • ${keepTy} stay with ${esc(personLabel('person2'))}`:''} • ${counts.move} move • ${counts.skip} skip this cycle${small?`<br>✨ Small win: <strong>${esc(small.instance.name)}</strong>`:''}`;
+  }
+
+  function renderCapacityPlan(){
+    capacityDraft=buildCapacityDraft(capacityMode);
+    const actionOrder={keep:0,move:1,skip:2};
+    capacityDraft.sort((a,b)=>(actionOrder[a.action]??9)-(actionOrder[b.action]??9)||Number(b.smallWin)-Number(a.smallWin)||capacityPriority(b.instance,capacityMode)-capacityPriority(a.instance,capacityMode));
+    const wrap=document.getElementById('capacityPlanList');wrap.innerHTML='';
+    if(!capacityDraft.length){
+      wrap.innerHTML='<div class="empty-state compact-empty"><h3>Nothing needs rescuing.</h3><p>There is no backlog asking for a recovery plan today.</p></div>';
+      document.getElementById('applyCapacityPlanBtn').disabled=true;updateCapacitySummary();return;
+    }
+    document.getElementById('applyCapacityPlanBtn').disabled=false;
+    let lastSuggestedAction=null;
+    capacityDraft.forEach(item=>{
+      if(item.action!==lastSuggestedAction){
+        lastSuggestedAction=item.action;
+        const group=document.createElement('div');group.className='capacity-group-label';group.textContent=item.action==='keep'?'KEEP TODAY':item.action==='move'?'MOVE':'SKIP THIS CYCLE';wrap.appendChild(group);
+      }
+      const i=item.instance,chore=choreById(i.choreId),effort=effortScoreForChore(chore);
+      const row=document.createElement('div');row.className=`capacity-row${item.smallWin?' small-win':''}`;row.dataset.instanceId=i.id;
+      const word=instanceRoutineWord(i);
+      const timing=i.originalDue?`${word} ${formatShort(i.originalDue)}`:`Planned ${formatShort(planDateOf(i))}`;
+      row.innerHTML=`<div class="capacity-row-main"><div class="capacity-row-name">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="capacity-row-meta">${esc(personLabel(i.assignedTo))} • ${esc(effortLabel(effort))} effort • ${esc(timing)}${item.smallWin?' • <span class="small-win-label">✨ small win</span>':''}<br>${esc(item.reason)}</div></div><div class="capacity-row-controls"><select aria-label="Recovery action for ${esc(i.name)}"><option value="keep">Keep today</option><option value="move">Move</option><option value="skip">Skip this cycle</option></select><input type="date" aria-label="New date for ${esc(i.name)}" /></div>`;
+      const select=row.querySelector('select'),date=row.querySelector('input');select.value=item.action;date.value=item.date||toISO(addDays(today(),1));date.classList.toggle('hidden-date',item.action!=='move');
+      select.addEventListener('change',()=>{item.action=select.value;if(item.action==='move'&&!item.date)item.date=date.value||toISO(addDays(today(),1));date.classList.toggle('hidden-date',item.action!=='move');updateCapacitySummary();});
+      date.addEventListener('change',()=>{item.date=date.value;});
+      wrap.appendChild(row);
+    });
+    updateCapacitySummary();
+  }
+
+  function openCapacityMode(){
+    capacityMode='bare';
+    document.querySelectorAll('[data-capacity]').forEach(b=>b.classList.toggle('active',b.dataset.capacity===capacityMode));
+    renderCapacityPlan();
+    document.getElementById('capacityDialog').showModal();
+  }
+
+  function applyCapacityPlan(){
+    const t=toISO(today());
+    // Skips first so a deliberately released cycle cannot be dragged forward by
+    // a later move in the same recovery plan.
+    capacityDraft.filter(x=>x.action==='skip').sort((a,b)=>(a.instance.originalDue||planDateOf(a.instance)).localeCompare(b.instance.originalDue||planDateOf(b.instance))).forEach(x=>skipInstance(x.instance.id,'capacity',true));
+    capacityDraft.filter(x=>x.action==='move').sort((a,b)=>(a.instance.originalDue||planDateOf(a.instance)).localeCompare(b.instance.originalDue||planDateOf(b.instance))).forEach(x=>{
+      const date=x.date&&x.date>t?x.date:toISO(addDays(today(),1));
+      moveInstance(x.instance.id,date,x.instance.assignedTo||'either',Boolean(x.instance.pinned),true);
+      x.instance.recoveryMoved=true;
+    });
+    capacityDraft.filter(x=>x.action==='keep').forEach(x=>{x.instance.recoveryFocusDate=t;});
+    saveState('Today reset to your capacity');
+    document.getElementById('capacityDialog').close();
+    renderAll();
+    toast('Recovery plan applied — today is allowed to be lighter');
+  }
+
   function renderEnergySuggestions(){
     const wrap=document.getElementById('energySuggestions');wrap.innerHTML='';
     const t=toISO(today());
-    const openIds=new Set(state.instances.filter(i=>!i.completed&&!i.cancelled).map(i=>i.choreId));
+    const openIds=new Set(state.instances.filter(i=>!i.completed&&!i.skipped&&!i.cancelled).map(i=>i.choreId));
     let pool=state.chores.filter(c=>c.active!==false&&!openIds.has(c.id)).map(c=>({chore:c,due:nextDue(c),days:daysBetween(t,nextDue(c))}));
     if(energyMode==='deep') pool=pool.filter(x=>x.chore.category==='Deep Clean').sort((a,b)=>a.days-b.days);
-    else if(energyMode==='quick') pool=pool.filter(x=>x.chore.importance!=='essential'&&x.chore.category!=='Deep Clean').sort((a,b)=>Math.abs(a.days)-Math.abs(b.days));
+    else if(energyMode==='quick') pool=pool.filter(x=>isSmallWinChore(x.chore)).sort((a,b)=>Math.abs(a.days)-Math.abs(b.days));
     else if(energyMode==='future') pool=pool.filter(x=>x.days>=0).sort((a,b)=>a.days-b.days);
     else pool=pool.sort((a,b)=>a.days-b.days);
     pool.slice(0,3).forEach(x=>{
       const card=document.createElement('div');card.className='task-card';
-      card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${x.days<=0?'Due now':`Due ${relativeDate(x.due).toLowerCase()}`}</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Add today</button>`;
+      card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${x.days<=0?`${routineDateWord(x.chore)} now`:`${routineDateWord(x.chore)} ${relativeDate(x.due).toLowerCase()}`}</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Add today</button>`;
       card.querySelector('button').addEventListener('click',()=>{
         const inst={id:uid('inst'),choreId:x.chore.id,name:x.chore.name,category:x.chore.category,importance:x.chore.importance,originalDue:x.due,scheduledDate:t,plannedDate:t,assignedTo:chooseAssignee(x.chore,startOfWeek(today())),completed:false,oneOff:false,optionalPullForward:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()};
         state.instances.push(inst);
@@ -1409,7 +1704,7 @@
       const currentNext=nextDue(c);
       const copy=normalizeChore(c);
       // Completion records are live history, not part of a reset template. Preserve the date currently shown as Next due.
-      copy.lastCompleted=null;copy.lastDueSatisfied=null;copy.lastCompletionChoice=null;copy.nextDueOverride=currentNext;
+      copy.lastCompleted=null;copy.lastDueSatisfied=null;copy.lastSkippedDue=null;copy.lastRolledDue=null;copy.lastCompletionChoice=null;copy.nextDueOverride=currentNext;
       return copy;
     });
     return {savedAt:new Date().toISOString(),chores};
@@ -1476,12 +1771,17 @@
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
     document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;completeInstance(id,document.getElementById('completedBy').value,choice);document.getElementById('completeDialog').close();});
     document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const assignee=document.getElementById('moveAssignee').value;const pinned=document.getElementById('pinPlanDate').checked;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,assignee,pinned);else moveInstance(target,date,assignee,pinned);document.getElementById('moveDialog').close();});
+    document.getElementById('skipOccurrenceBtn').addEventListener('click',()=>{const id=document.getElementById('moveInstanceId').value;const i=instanceById(id);if(!i)return;const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';if(confirm(`Skip “${i.name}” for this ${word} cycle? This will not count as completed.`)){document.getElementById('moveDialog').close();skipInstance(id,'manual');}});
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.addEventListener('click',()=>{plannerViewMode=b.dataset.plannerView;plannerWeekStart=plannerViewMode==='month'?new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth(),1):startOfWeek(plannerWeekStart);renderPlanner();}));
     document.getElementById('prevWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()-1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?-14:-7);renderPlanner();});
     document.getElementById('nextWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()+1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?14:7);renderPlanner();});
     document.getElementById('weekLabelBtn').addEventListener('click',()=>{plannerWeekStart=plannerViewMode==='month'?new Date(today().getFullYear(),today().getMonth(),1):startOfWeek(today());renderPlanner();});
     document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerPeriod().start),toISO(today()));document.getElementById('oneOffAssignee').value='either';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
     document.getElementById('saveOneOffBtn').addEventListener('click',e=>{e.preventDefault();addOneOff();});
+    document.getElementById('capacityBtn').addEventListener('click',openCapacityMode);
+    document.getElementById('recoveryNudgeBtn').addEventListener('click',openCapacityMode);
+    document.querySelectorAll('[data-capacity]').forEach(b=>b.addEventListener('click',()=>{capacityMode=b.dataset.capacity;document.querySelectorAll('[data-capacity]').forEach(x=>x.classList.toggle('active',x===b));renderCapacityPlan();}));
+    document.getElementById('applyCapacityPlanBtn').addEventListener('click',e=>{e.preventDefault();applyCapacityPlan();});
     document.getElementById('energyBtn').addEventListener('click',()=>{energyMode='soon';document.querySelectorAll('[data-energy]').forEach(b=>b.classList.toggle('active',b.dataset.energy==='soon'));renderEnergySuggestions();document.getElementById('energyDialog').showModal();});
     document.querySelectorAll('[data-energy]').forEach(b=>b.addEventListener('click',()=>{energyMode=b.dataset.energy;document.querySelectorAll('[data-energy]').forEach(x=>x.classList.toggle('active',x===b));renderEnergySuggestions();}));
     document.getElementById('saveSettingsBtn').addEventListener('click',saveSettings);document.getElementById('pushCloudBtn').addEventListener('click',pushCloud);document.getElementById('pullCloudBtn').addEventListener('click',pullCloud);

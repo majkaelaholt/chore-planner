@@ -64,6 +64,13 @@
               </div>
               <span class="count-pill" id="todayCount">0 left</span>
             </div>
+            <div id="recoveryNudge" class="recovery-nudge hidden">
+              <div>
+                <strong>Plans piled up?</strong>
+                <span>You do not have to turn every missed target into today’s job.</span>
+              </div>
+              <button type="button" class="secondary-btn" id="recoveryNudgeBtn">🪫 Reset today</button>
+            </div>
             <div id="todayTaskList" class="task-list"></div>
             <div id="todayEmpty" class="empty-state hidden">
               <div class="empty-illustration">☕</div>
@@ -77,6 +84,15 @@
               <p class="section-kicker">TODAY, SO FAR</p>
               <div class="today-stat"><strong id="completedTodayCount">0</strong><span>chores completed</span></div>
               <div id="completedTodayList" class="mini-list"></div>
+            </section>
+
+            <section class="panel capacity-panel">
+              <div>
+                <p class="section-kicker">REAL-LIFE MODE</p>
+                <h3>Need a lighter day?</h3>
+                <p>Schedules are targets, not contracts. Let the app help you keep, move, or intentionally skip what no longer fits.</p>
+              </div>
+              <button class="primary-btn" id="capacityBtn">🪫 Reset today</button>
             </section>
 
             <section class="panel energy-panel">
@@ -162,7 +178,7 @@
           </div>
           <div class="planner-legend" id="plannerLegend"><span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-person1"></i> Mak</span><span><i class="legend-person2"></i> Ty</span><span><i class="legend-either"></i> Either</span><span>📌 Pinned</span></div>
         </div>
-        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> due dates belong to the chore rhythm; planned dates are when you intend to do them. Unpinned future plans move when an earlier completion changes the rhythm.</div>
+        <div class="planner-note" id="plannerNote"><strong>Planning rule:</strong> routine dates are targets unless the chore is truly calendar-fixed. Planned dates are your intention; completed dates are what actually happened.</div>
         <div class="week-board" id="weekBoard"></div>
         <div class="planner-footer">
           <button class="secondary-btn" id="addOneOffBtn">＋ Add one-off chore</button>
@@ -333,10 +349,11 @@
           <label>Weekday<select id="monthWeekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
         </div>
         <label>Start date <span class="optional">first eligible due / schedule anchor</span><input id="startDate" type="date" required /></label>
-        <label>Next due <span class="optional">current occurrence • editable override</span><span class="date-with-action"><input id="nextDueDate" type="date" required /><button type="button" class="mini-link" id="clearNextDueBtn">Use schedule</button></span></label>
+        <label>Next target / due <span class="optional">current occurrence • editable override</span><span class="date-with-action"><input id="nextDueDate" type="date" required /><button type="button" class="mini-link" id="clearNextDueBtn">Use schedule</button></span></label>
         <label>Importance<select id="choreImportance"><option value="essential">Essential</option><option value="regular" selected>Regular</option><option value="low">Low stakes</option></select></label>
         <label>Grace override<input id="choreGrace" type="number" min="0" max="30" placeholder="Use default" /></label>
         <label>Schedule behavior<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select><span class="field-help" id="scheduleBehaviorHelp">Choose whether the interval restarts when you complete it.</span></label>
+        <label>Date meaning<select id="choreDateMeaning"><option value="target">Target day — flexible</option><option value="fixed">Fixed / calendar-dependent</option></select><span class="field-help">A target gives structure without becoming a rule you failed. Use Fixed only when the actual date matters.</span></label>
         <label>Last completed<input id="lastCompleted" type="date" /></label>
         <label class="span-two">Tags <span class="optional">optional • comma separated</span><input id="choreTags" maxlength="160" placeholder="e.g. quick, office, pair together" /></label>
         <label class="span-two">Areas / notes <span class="optional">optional</span><input id="choreAreas" maxlength="120" placeholder="e.g. bedroom, office, living room" /></label>
@@ -370,6 +387,28 @@
         <label class="radio-row"><input type="radio" name="scheduleChoice" value="fixed" /> No — keep original rhythm</label>
       </div>
       <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmCompleteBtn" value="default">Done ✓</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="capacityDialog" class="modal capacity-modal">
+    <form method="dialog" id="capacityForm">
+      <div class="modal-head"><div><p class="section-kicker">RESET TODAY</p><h2>What kind of day is this?</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <p class="modal-copy capacity-copy">A missed target does not mean you failed the routine — and it does not mean you have to wait for the next target. Pick the amount of capacity you actually have today.</p>
+      <div class="capacity-levels" id="capacityLevels">
+        <button type="button" class="capacity-level active" data-capacity="bare">
+          <span class="capacity-icon">🪫</span><span><strong>Bare minimum</strong><small>Protect the essentials, favor a small win, and let more go.</small></span>
+        </button>
+        <button type="button" class="capacity-level" data-capacity="light">
+          <span class="capacity-icon">🌙</span><span><strong>Light day</strong><small>Keep a few meaningful things and spread the rest out.</small></span>
+        </button>
+        <button type="button" class="capacity-level" data-capacity="catchup">
+          <span class="capacity-icon">🙂</span><span><strong>Help me catch up</strong><small>Redistribute the backlog without cutting much.</small></span>
+        </button>
+      </div>
+      <div class="capacity-rule-note"><strong>Essential chores are never suggested for skipping.</strong> You can still choose “Skip this cycle” yourself if real life calls for it.</div>
+      <div id="capacityPlanSummary" class="capacity-summary"></div>
+      <div id="capacityPlanList" class="capacity-plan-list"></div>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Never mind</button><button class="primary-btn" id="applyCapacityPlanBtn" value="default">Apply recovery plan</button></div>
     </form>
   </dialog>
 
@@ -409,6 +448,7 @@
       <label>Planned date<input id="moveDate" type="date" required /></label>
       <label>Assigned to<select id="moveAssignee"></select></label>
       <label class="pin-plan-row"><input id="pinPlanDate" type="checkbox" /> <span><strong>Pin this date</strong><small>Keep this occurrence on this exact day even if an earlier completion shifts the routine.</small></span></label>
+      <div class="move-extra-actions"><button type="button" class="text-btn danger" id="skipOccurrenceBtn">Skip this occurrence</button><span class="move-skip-help" id="moveSkipHelp">Let this cycle go without pretending it was completed.</span></div>
       <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmMoveBtn" value="default">Save plan</button></div>
     </form>
   </dialog>

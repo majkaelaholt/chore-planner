@@ -2,6 +2,22 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.15
+
+- Added **🪫 Reset today** for the days when the backlog is bigger than your actual capacity.
+- Capacity levels: **Bare minimum**, **Light day**, and **Help me catch up**. The app proposes a recovery plan before changing anything.
+- Recovery plans split chores into **Keep today / Move / Skip this cycle**, and every suggestion can be changed before applying it.
+- Bare-minimum planning deliberately favors a **small win** and treats chores assigned to Ty as outside Mak's personal capacity count.
+- **Essential chores are never auto-suggested for skipping**; they can still be manually skipped when real life calls for it.
+- Added **Skip this occurrence** under a planned chore's ••• menu. Skipping is recorded separately from completion.
+- Completion-based skips advance to the next target without pretending the skipped chore was done; fixed/calendar rhythms stay anchored to their normal next occurrence.
+- Household Overview understands **Skipped this cycle** as a neutral state: it does not reset freshness, but it also stops demanding that missed cycle until the next target.
+- Added a **Date meaning** setting per chore: **Target day — flexible** or **Fixed / calendar-dependent**. This lets routines stay concrete without treating every target date like a hard rule.
+- Today now collapses multiple missed occurrences of the same recurring chore into the current occurrence, so missed housework does not become duplicate chore debt. Completing the chore once covers earlier missed cycles up through that day.
+- Today separates the remaining count when relevant (for example **Mak/Either • Ty**) so chores assigned to Ty do not read like Mak's personal workload.
+- **Quick win** suggestions now use a lightweight effort heuristic (and optional `quick`/`easy`/`small win` tags) rather than only importance.
+- Bumped the PWA cache to `household-v1-15`.
+
 ## v1.14
 
 - Removed **Balance planned chores** from the Planner. Planned dates now stay entirely under your direct control unless the normal recurrence/reflow logic changes them.
@@ -88,7 +104,7 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 
 ## What it does
 
-- **Today view** only shows chores that belong to today and celebrates when the day is handled.
+- **Today view** shows the current occurrence of each chore that needs attention, without stacking duplicate missed cycles. A recovery mode can deliberately make the day lighter.
 - **Household Overview** visualizes maintenance freshness for Essential chores by default, with an optional all-chore view and category statuses.
 - **Planner** has Week / 2 Weeks / Month views that all show the same continuous schedule. Solid cards are explicit plans; outlined cards are forecasts. Due dates stay tied to the routine while planned dates can move independently, and completion-based plans reflow when reality changes.
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
@@ -97,9 +113,10 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 - **Flexible recurrence**: every X days/weeks/months, a specific weekday, a specific day of the month, or patterns like the first Sunday of each month.
 - **Editable Start date + Next due date** for each recurring chore, including one-cycle next-date overrides.
 - **Fixed, completion-based, or ask-each-time recurrence** behavior for interval-based chores.
-- **Missed-plan logic** keeps the original planned date intact while continuing to surface unfinished chores in Today.
+- **Missed-plan logic** keeps the original planned date intact, treats target days as flexible when appropriate, and lets you move or intentionally skip a cycle without pretending it was completed.
+- **Capacity mode** offers Bare minimum / Light day / Catch-up recovery plans, including small wins, rescheduling, and intentional skips.
 - **Extra Energy mode** reveals at most three optional suggestions only when you intentionally ask for more.
-- **History** records who completed each chore and when.
+- **History** records completions and intentional skipped cycles separately.
 - **Local-first storage** plus JSON export/import.
 - **Optional Supabase backup** using a single JSON row.
 - Installable as a **PWA** on iPhone/desktop.
@@ -135,8 +152,9 @@ Every recurring chore has:
 - a grace window based on importance
 - a default assignee
 - a schedule behavior
+- a **date meaning**: flexible target or truly fixed/calendar-dependent date
 
-The planner shows recurring chores continuously without requiring a generation step. Each occurrence can have a due date, a planned date, and eventually an actual completion date. Forecasts land on expected due dates. Planning an occurrence creates a temporary completion assumption; later unpinned plans follow that assumption. When the chore is actually completed, reality takes over and the future chain reflows. Pin an occurrence when a specific calendar date must not move.
+The planner shows recurring chores continuously without requiring a generation step. Each occurrence can have a routine target/due date, a planned date, and eventually an actual completion date. Forecasts land on expected routine dates. Planning an occurrence creates a temporary completion assumption; later unpinned plans follow that assumption. When the chore is actually completed, reality takes over and the future chain reflows. Pin an occurrence when a specific calendar date must not move.
 
 ## Default chore library
 
