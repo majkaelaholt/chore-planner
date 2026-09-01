@@ -2,6 +2,16 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.16
+
+- Rebuilt **Reset Today** on phones as a full-width bottom sheet instead of a cramped desktop-style dialog.
+- The recovery plan now uses **one vertical scroll**; the plan list no longer has its own nested scroll area on mobile.
+- Recovery action controls are full-width on phones. When **Move** is selected, its date field stacks underneath so iOS date inputs cannot overflow the card.
+- Hidden Move dates no longer reserve empty space beside Keep/Skip actions.
+- The recovery footer stays visible with a sticky, safe-area-aware **Never mind / Apply recovery plan** bar.
+- Added mobile overflow guards so Reset Today cannot make the page scroll side-to-side.
+- Bumped the PWA cache to `household-v1-16`.
+
 ## v1.15
 
 - Added **🪫 Reset today** for the days when the backlog is bigger than your actual capacity.

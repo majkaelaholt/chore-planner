@@ -485,3 +485,114 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .capacity-modal form { max-height: calc(100vh - 24px); display: flex; flex-direction: column; }
 .capacity-modal .capacity-plan-list { max-height: none; min-height: 100px; flex: 1 1 auto; overflow: auto; }
 .capacity-modal .modal-actions { flex: 0 0 auto; margin-top: 12px; padding-top: 8px; background: var(--surface); }
+
+/* v1.16 — Reset Today mobile sheet + overflow cleanup */
+@media (max-width: 760px) {
+  /* Keep accidental control overflow from turning the whole app into a sideways scroller. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  /* Reset Today becomes a roomy bottom sheet instead of a desktop dialog squeezed onto mobile. */
+  .capacity-modal {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-width: none;
+    height: min(94dvh, calc(100dvh - env(safe-area-inset-top)));
+    max-height: none;
+    margin: 0;
+    border-radius: 22px 22px 0 0;
+    overflow: hidden;
+  }
+  .capacity-modal form {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    min-width: 0;
+    padding: 20px 16px 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .capacity-modal .modal-head { margin-bottom: 14px; }
+  .capacity-modal .modal-head h2 { font-size: 29px; line-height: 1.05; }
+  .capacity-modal .capacity-copy { font-size: 12px; line-height: 1.45; margin-bottom: 2px; }
+  .capacity-modal .capacity-levels { gap: 8px; margin: 13px 0 10px; }
+  .capacity-modal .capacity-level { padding: 12px 13px; border-radius: 13px; }
+  .capacity-modal .capacity-rule-note { margin-bottom: 2px; }
+  .capacity-modal .capacity-summary { margin: 13px 0 9px; line-height: 1.45; }
+
+  /* The sheet itself scrolls. Avoid a second nested scroll area for the plan. */
+  .capacity-modal .capacity-plan-list {
+    display: grid;
+    flex: 0 0 auto;
+    min-height: 0;
+    max-height: none;
+    width: 100%;
+    min-width: 0;
+    overflow: visible;
+    padding: 0 0 10px;
+  }
+  .capacity-row {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: 13px;
+    gap: 11px;
+  }
+  .capacity-row-main,
+  .capacity-row-controls { width: 100%; max-width: 100%; min-width: 0; }
+  .capacity-row-name { font-size: 13px; }
+  .capacity-row-meta { font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere; }
+
+  /* Native iOS date inputs have a large intrinsic width. Stack controls so they never escape the card. */
+  .capacity-row-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .capacity-row-controls select,
+  .capacity-row-controls input[type="date"] {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 46px;
+    margin: 0;
+  }
+  /* Don't leave an invisible date control taking up half the card when the action is Keep/Skip. */
+  .capacity-row-controls input.hidden-date { display: none; }
+
+  /* One sticky footer, with safe-area breathing room, rather than controls floating over the plan. */
+  .capacity-modal .modal-actions {
+    position: sticky;
+    z-index: 4;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: minmax(0, .8fr) minmax(0, 1.35fr);
+    gap: 8px;
+    width: calc(100% + 32px);
+    margin: 8px -16px 0;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: rgba(255,253,249,.97);
+    backdrop-filter: blur(12px);
+  }
+  .capacity-modal .modal-actions button {
+    width: 100%;
+    min-width: 0;
+    min-height: 46px;
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 390px) {
+  .capacity-modal form { padding-inline: 13px; }
+  .capacity-modal .modal-actions {
+    width: calc(100% + 26px);
+    margin-inline: -13px;
+    padding-inline: 13px;
+  }
+  .capacity-modal .modal-head h2 { font-size: 27px; }
+}
