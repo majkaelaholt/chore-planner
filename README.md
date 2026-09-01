@@ -2,6 +2,16 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.22
+
+- Added **Remove from plan** to Planner quick actions for recurring occurrences that were explicitly planned/moved. Future targets return to an outlined forecast; if the target has already arrived, the extra plan is removed but the chore remains honestly due at its routine target. Later completion-based forecasts are re-anchored to the routine target rather than the abandoned plan.
+- Reorganized the chore editor into calmer **Chore / Rhythm / Planning** sections.
+- Moved Grace, completion behavior, and date meaning into a collapsed **Flexibility & behavior** section with a short summary.
+- Calendar-based recurrences no longer show the irrelevant disabled “After completion” control.
+- Moved Tags/Notes and schedule repair into separate collapsed sections.
+- Chore editor now has its own scrollable body with a persistent header/footer so Save is always reachable.
+- Bumped the PWA cache to `household-v1-22`.
+
 ## v1.21
 
 - Removed the visible `•••` buttons from Planner cards to reduce calendar clutter.

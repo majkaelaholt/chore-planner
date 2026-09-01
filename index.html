@@ -316,50 +316,82 @@
     </nav>
   </div>
 
-  <dialog id="choreDialog" class="modal">
+  <dialog id="choreDialog" class="modal chore-modal">
     <form method="dialog" id="choreForm">
-      <div class="modal-head"><div><p class="section-kicker" id="choreModalKicker">NEW ROUTINE</p><h2 id="choreModalTitle">Add chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <div class="modal-head chore-modal-head"><div><p class="section-kicker" id="choreModalKicker">NEW ROUTINE</p><h2 id="choreModalTitle">Add chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
       <input type="hidden" id="choreId" />
-      <div class="form-grid two-col">
-        <label class="span-two">Chore name<input id="choreName" required maxlength="80" placeholder="e.g. Wipe surfaces" /></label>
-        <label>Category<select id="choreCategory"></select></label>
-        <label>Default person<select id="choreAssignee"></select></label>
-        <label class="span-two">Recurrence style<select id="recurrenceType"><option value="interval">Every X days / weeks / months</option><option value="weekly">Specific weekday</option><option value="monthly-day">Specific day of the month</option><option value="monthly-weekday">Specific weekday of the month</option></select></label>
-        <div id="intervalRecurrenceFields" class="form-subgrid span-two">
-          <label>Repeat every<input id="recurrenceValue" type="number" min="1" max="365" value="7" required /></label>
-          <label>Unit<select id="recurrenceUnit"><option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option></select></label>
-        </div>
-        <div id="weeklyRecurrenceFields" class="form-subgrid span-two hidden">
-          <label>Every <span class="optional">weeks</span><input id="weeklyInterval" type="number" min="1" max="52" value="1" /></label>
-          <label>On<select id="weeklyDay"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
-        </div>
-        <div id="monthlyDayRecurrenceFields" class="form-subgrid span-two hidden">
-          <label>Every <span class="optional">months</span><input id="monthlyDayInterval" type="number" min="1" max="24" value="1" /></label>
-          <label>On day<input id="monthDay" type="number" min="1" max="31" value="1" /></label>
-        </div>
-        <div id="monthlyWeekdayRecurrenceFields" class="form-subgrid span-two hidden">
-          <label>Every <span class="optional">months</span><input id="monthlyWeekdayInterval" type="number" min="1" max="24" value="1" /></label>
-          <label>Week<select id="monthOrdinal"><option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option><option value="4">4th</option><option value="5">5th</option><option value="-1">Last</option></select></label>
-          <label>Weekday<select id="monthWeekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
-        </div>
-        <label>Start date <span class="optional">first eligible due / schedule anchor</span><input id="startDate" type="date" required /></label>
-        <label>Importance<select id="choreImportance"><option value="essential">Essential</option><option value="regular" selected>Regular</option><option value="low">Low stakes</option></select></label>
-        <label>Effort<select id="choreEffort"><option value="auto">Auto</option><option value="quick">Quick</option><option value="medium">Medium</option><option value="bigger">Bigger</option></select><span class="field-help">Used for Reset Today and small-win suggestions. Auto uses the chore name/category.</span></label>
-        <label>Grace override<input id="choreGrace" type="number" min="0" max="30" placeholder="Use default" /></label>
-        <label>Schedule behavior<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select><span class="field-help" id="scheduleBehaviorHelp">Choose whether the interval restarts when you complete it.</span></label>
-        <label>Date meaning<select id="choreDateMeaning"><option value="target">Target day — flexible</option><option value="fixed">Fixed / calendar-dependent</option></select><span class="field-help">A target gives structure without becoming a rule you failed. Use Fixed only when the actual date matters.</span></label>
-        <details class="advanced-schedule span-two">
-          <summary>Advanced schedule correction</summary>
-          <p class="field-help">Use these only to correct setup or seed older history. For an ordinary change of plans, move the occurrence in Planner instead.</p>
-          <div class="form-subgrid">
+
+      <div class="chore-editor-body">
+        <section class="chore-editor-section">
+          <div class="editor-section-head"><div class="editor-section-icon">🧽</div><div><h3>Chore</h3><p>What it is and who usually handles it.</p></div></div>
+          <div class="form-grid two-col">
+            <label class="span-two">Chore name<input id="choreName" required maxlength="80" placeholder="e.g. Wipe surfaces" /></label>
+            <label>Category<select id="choreCategory"></select></label>
+            <label>Default person<select id="choreAssignee"></select></label>
+          </div>
+        </section>
+
+        <section class="chore-editor-section">
+          <div class="editor-section-head"><div class="editor-section-icon">🗓️</div><div><h3>Rhythm</h3><p>When this chore normally comes around.</p></div></div>
+          <div class="form-grid two-col">
+            <label class="span-two">Repeat<select id="recurrenceType"><option value="interval">Every X days / weeks / months</option><option value="weekly">Specific weekday</option><option value="monthly-day">Specific day of the month</option><option value="monthly-weekday">Specific weekday of the month</option></select></label>
+            <div id="intervalRecurrenceFields" class="form-subgrid span-two compact-recurrence">
+              <label>Every<input id="recurrenceValue" type="number" min="1" max="365" value="7" required /></label>
+              <label>Unit<select id="recurrenceUnit"><option value="days">days</option><option value="weeks">weeks</option><option value="months">months</option></select></label>
+            </div>
+            <div id="weeklyRecurrenceFields" class="form-subgrid span-two compact-recurrence hidden">
+              <label>Every <span class="optional">weeks</span><input id="weeklyInterval" type="number" min="1" max="52" value="1" /></label>
+              <label>On<select id="weeklyDay"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+            </div>
+            <div id="monthlyDayRecurrenceFields" class="form-subgrid span-two compact-recurrence hidden">
+              <label>Every <span class="optional">months</span><input id="monthlyDayInterval" type="number" min="1" max="24" value="1" /></label>
+              <label>On day<input id="monthDay" type="number" min="1" max="31" value="1" /></label>
+            </div>
+            <div id="monthlyWeekdayRecurrenceFields" class="form-subgrid span-two compact-recurrence hidden">
+              <label>Every <span class="optional">months</span><input id="monthlyWeekdayInterval" type="number" min="1" max="24" value="1" /></label>
+              <label>Week<select id="monthOrdinal"><option value="1">1st</option><option value="2">2nd</option><option value="3">3rd</option><option value="4">4th</option><option value="5">5th</option><option value="-1">Last</option></select></label>
+              <label>Weekday<select id="monthWeekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+            </div>
+            <label class="span-two rhythm-start">Start date <span class="optional">first eligible target / schedule anchor</span><input id="startDate" type="date" required /></label>
+          </div>
+        </section>
+
+        <section class="chore-editor-section">
+          <div class="editor-section-head"><div class="editor-section-icon">✨</div><div><h3>Planning</h3><p>How much this chore matters when the week gets messy.</p></div></div>
+          <div class="form-grid two-col">
+            <label>Importance<select id="choreImportance"><option value="essential">Essential</option><option value="regular" selected>Regular</option><option value="low">Low stakes</option></select></label>
+            <label>Effort<select id="choreEffort"><option value="auto">Auto</option><option value="quick">Quick</option><option value="medium">Medium</option><option value="bigger">Bigger</option></select><span class="field-help">Used by Reset Today and small-win suggestions.</span></label>
+          </div>
+
+          <details class="editor-details behavior-details" id="behaviorDetails">
+            <summary><span><strong>Flexibility &amp; behavior</strong><small id="behaviorSummary">Default grace · flexible target</small></span></summary>
+            <div class="form-grid two-col details-fields">
+              <label>Grace override<input id="choreGrace" type="number" min="0" max="30" placeholder="Use default" /><span class="field-help">Leave blank to use the default for this importance level.</span></label>
+              <label id="scheduleBehaviorField">After completion<select id="scheduleBehavior"><option value="completion">Restart from completion</option><option value="fixed">Keep original rhythm</option><option value="ask">Ask when completed</option></select><span class="field-help" id="scheduleBehaviorHelp">Choose whether the interval restarts when you complete it.</span></label>
+              <label class="span-two">Date meaning<select id="choreDateMeaning"><option value="target">Target day — flexible</option><option value="fixed">Fixed / calendar-dependent</option></select><span class="field-help">Use Fixed only when the actual calendar date matters. Otherwise a target is allowed to move without becoming a failed rule.</span></label>
+            </div>
+          </details>
+        </section>
+
+        <details class="chore-editor-section editor-details optional-details">
+          <summary><span><strong>Notes &amp; tags</strong><small>Optional organization</small></span></summary>
+          <div class="form-grid details-fields">
+            <label>Tags <span class="optional">comma separated</span><input id="choreTags" maxlength="160" placeholder="e.g. quick, office, pair together" /></label>
+            <label>Areas / notes<input id="choreAreas" maxlength="120" placeholder="e.g. bedroom, office, living room" /></label>
+          </div>
+        </details>
+
+        <details class="chore-editor-section editor-details advanced-schedule" id="advancedScheduleDetails">
+          <summary><span><strong>Schedule repair</strong><small>Only if the routine is out of sync</small></span></summary>
+          <p class="field-help advanced-explainer">For ordinary changes of plans, move the occurrence in Planner instead.</p>
+          <div class="form-grid two-col details-fields">
             <label>Next target / due <span class="optional">one-cycle override</span><span class="date-with-action"><input id="nextDueDate" type="date" required /><button type="button" class="mini-link" id="clearNextDueBtn">Use schedule</button></span></label>
             <label>Starting history <span class="optional">last completed before using the app</span><input id="lastCompleted" type="date" /></label>
           </div>
         </details>
-        <label class="span-two">Tags <span class="optional">optional • comma separated</span><input id="choreTags" maxlength="160" placeholder="e.g. quick, office, pair together" /></label>
-        <label class="span-two">Areas / notes <span class="optional">optional</span><input id="choreAreas" maxlength="120" placeholder="e.g. bedroom, office, living room" /></label>
       </div>
-      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="saveChoreBtn" value="default">Save chore</button></div>
+
+      <div class="modal-actions chore-modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="saveChoreBtn" value="default">Save chore</button></div>
     </form>
   </dialog>
 

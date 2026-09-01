@@ -602,6 +602,41 @@
     if(!silent){saveState('Skipped this cycle');renderAll();}
   }
 
+  function canUnplanInstance(i){
+    if(!i||!i.choreId||i.oneOff||i.completed||i.skipped||i.cancelled||i.historicalSeed)return false;
+    const due=i.originalDue;
+    if(!due)return false;
+    // Only show this for a real planning decision. An occurrence that merely
+    // became active because its target day arrived has nothing extra to remove.
+    return Boolean(i.manualPlan||i.pinned||i.snoozed||planDateOf(i)!==due);
+  }
+
+  function unplanInstance(id){
+    const i=instanceById(id);if(!canUnplanInstance(i))return;
+    const chore=choreById(i.choreId);if(!chore)return;
+    const due=i.originalDue;
+    const oldPlan=planDateOf(i)||due;
+    // A completion-based forecast may have been using this planned date as its
+    // temporary anchor. Removing the plan restores the routine target as the
+    // assumption for later occurrences.
+    rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,due,'unplan');
+    if(due>toISO(today())){
+      // Future target: there is no need for a stored occurrence anymore. Once
+      // removed, the normal planner projection renders it as an outlined forecast.
+      state.instances=state.instances.filter(x=>x.id!==id);
+      saveState('Removed from plan — forecast restored');
+    }else{
+      // The target has already arrived, so it cannot honestly go back to being a
+      // future forecast. Remove the planning choices but keep the due occurrence
+      // active at its routine target so Today can still surface it.
+      setPlanDate(i,due);
+      i.manualPlan=false;i.pinned=false;i.snoozed=false;i.recoveryFocusDate=null;
+      i.assignedTo=chooseAssignee(chore,startOfWeek(parseISO(due)));
+      saveState('Plan removed — chore is still due');
+    }
+    renderAll();
+  }
+
   function moveInstance(id,date,assignee,pinned=false,silent=false) {
     const i=instanceById(id); if(!i||i.skipped) return;
     const oldPlan=planDateOf(i)||date;
@@ -1130,7 +1165,8 @@
     const width=Math.min(240,window.innerWidth-pad*2);
     menu.style.width=`${width}px`;
     menu.style.left=`${Math.max(pad,Math.min(x,window.innerWidth-width-pad))}px`;
-    menu.style.top=`${Math.max(pad,Math.min(y,window.innerHeight-250))}px`;
+    const height=menu.offsetHeight||280;
+    menu.style.top=`${Math.max(pad,Math.min(y,window.innerHeight-height-pad))}px`;
   }
 
   function openPlannerQuickMenu(id,anchor=null,point=null){
@@ -1144,6 +1180,7 @@
       actions.push(['done','✓ Done today']);
       actions.push(['done-date','📅 Mark done on…']);
       actions.push(['move','↪ Move / re-plan']);
+      if(canUnplanInstance(i))actions.push(['unplan','↩ Remove from plan']);
       actions.push(['skip','⏭ Skip this cycle']);
     }
     if(i.choreId)actions.push(['edit','✎ Edit chore']);
@@ -1155,6 +1192,7 @@
       if(action==='done')openComplete(id,false);
       else if(action==='done-date')openComplete(id,true);
       else if(action==='move')openMove(id);
+      else if(action==='unplan')unplanInstance(id);
       else if(action==='skip'){
         const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';
         if(confirm(`Skip “${i.name}” for this ${word} cycle? This occurrence will be retired, but the next recurrence will still appear.`))skipInstance(id,'manual');
@@ -1473,8 +1511,22 @@
       if(chosen!=='interval'){if(!behavior.disabled)behavior.dataset.intervalValue=behavior.value||'completion';behavior.value='fixed';behavior.disabled=true;}
       else {behavior.disabled=false;behavior.value=behavior.dataset.intervalValue||behavior.value||'completion';}
     }
+    const behaviorField=document.getElementById('scheduleBehaviorField');
+    if(behaviorField)behaviorField.classList.toggle('hidden',chosen!=='interval');
     const help=document.getElementById('scheduleBehaviorHelp');
-    if(help)help.textContent=chosen==='interval'?'Choose whether the interval restarts when you complete it.':'Calendar-based routines stay anchored to the selected weekday/date.';
+    if(help)help.textContent='Choose whether the interval restarts when you complete it.';
+    updateBehaviorSummary();
+  }
+
+  function updateBehaviorSummary(){
+    const summary=document.getElementById('behaviorSummary');if(!summary)return;
+    const grace=document.getElementById('choreGrace')?.value;
+    const meaning=document.getElementById('choreDateMeaning')?.value||'target';
+    const type=document.getElementById('recurrenceType')?.value||'interval';
+    const behavior=document.getElementById('scheduleBehavior')?.value||'completion';
+    const parts=[grace!==''?`${grace}d grace`:'Default grace',meaning==='fixed'?'Fixed date':'Flexible target'];
+    if(type==='interval'&&behavior!=='completion')parts.push(behavior==='fixed'?'Original rhythm':'Ask after completion');
+    summary.textContent=parts.join(' · ');
   }
 
   function openChore(id=null){
@@ -1489,7 +1541,11 @@
     document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreEffort').value=c?.effort||'auto';document.getElementById('choreGrace').value=c?.graceOverride??'';const behavior=document.getElementById('scheduleBehavior');behavior.value=type==='interval'?(c?.scheduleBehavior||'completion'):'fixed';behavior.dataset.intervalValue=type==='interval'?(c?.scheduleBehavior||'completion'):'completion';document.getElementById('choreDateMeaning').value=c?.dateMeaning||(((type==='interval')&&(c?.scheduleBehavior==='fixed'))?'fixed':'target');document.getElementById('lastCompleted').value=c?.lastCompleted||'';
     const startDate=c?.startDate||toISO(today());document.getElementById('startDate').value=startDate;
     const nextInput=document.getElementById('nextDueDate');const shownNext=c?nextDue(c):startDate;nextInput.value=shownNext;nextInput.dataset.natural=c?nextDue(c,true):startDate;nextInput.dataset.hadOverride=c?.nextDueOverride?'1':'0';nextInput.dataset.userEdited='0';
-    document.getElementById('choreTags').value=normalizeTags(c?.tags).join(', ');document.getElementById('choreAreas').value=c?.areas||'';setRecurrenceFields(type);d.showModal();
+    document.getElementById('choreTags').value=normalizeTags(c?.tags).join(', ');document.getElementById('choreAreas').value=c?.areas||'';
+    document.getElementById('behaviorDetails').open=false;
+    document.getElementById('advancedScheduleDetails').open=false;
+    document.querySelector('.optional-details')?.removeAttribute('open');
+    setRecurrenceFields(type);updateBehaviorSummary();d.showModal();
   }
 
   function recurrenceDataFromForm(){
@@ -1940,7 +1996,8 @@
     document.getElementById('batchTagMode').addEventListener('change',e=>{document.getElementById('batchTagsLabel').classList.toggle('hidden',e.target.value==='none'||e.target.value==='clear');});
     document.getElementById('applyBatchEditBtn').addEventListener('click',e=>{e.preventDefault();applyBatchEdit();});
     document.getElementById('recurrenceType').addEventListener('change',e=>{setRecurrenceFields(e.target.value);refreshNextDuePreview();});
-    ['recurrenceValue','recurrenceUnit','weeklyInterval','weeklyDay','monthlyDayInterval','monthDay','monthlyWeekdayInterval','monthOrdinal','monthWeekday','startDate','lastCompleted','scheduleBehavior'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>refreshNextDuePreview()));
+    ['recurrenceValue','recurrenceUnit','weeklyInterval','weeklyDay','monthlyDayInterval','monthDay','monthlyWeekdayInterval','monthOrdinal','monthWeekday','startDate','lastCompleted','scheduleBehavior'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{refreshNextDuePreview();updateBehaviorSummary();}));
+    ['choreGrace','choreDateMeaning'].forEach(id=>document.getElementById(id)?.addEventListener('change',updateBehaviorSummary));
     document.getElementById('nextDueDate').addEventListener('input',e=>{e.target.dataset.userEdited='1';});
     document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
