@@ -596,3 +596,13 @@ select:disabled { opacity: .62; cursor: not-allowed; }
   }
   .capacity-modal .modal-head h2 { font-size: 27px; }
 }
+
+
+/* v1.17 — completion backdating */
+.completion-date-tools { display: grid; gap: 8px; margin-top: -2px; }
+.completion-date-toggle { justify-self: start; padding-left: 0; }
+.completion-date-tools label { margin: 0; }
+.completion-date-tools input[type="date"] { width: 100%; max-width: 100%; }
+@media (max-width: 640px) {
+  .completion-date-toggle { min-height: 38px; }
+}

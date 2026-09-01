@@ -411,7 +411,7 @@
   }
 
   function calendarDateForInstance(i){
-    if(i?.completed && i.completedAt) return String(i.completedAt).slice(0,10);
+    if(i?.completed && (i.completedDate||i.completedAt)) return i.completedDate||String(i.completedAt).slice(0,10);
     return planDateOf(i);
   }
 
@@ -524,40 +524,52 @@
     });
   }
 
-  function completeInstance(id, completedBy, scheduleChoice=null) {
-    const i=instanceById(id); if(!i) return;
+  function completionTimestampForDate(dateIso){
+    const t=toISO(today());
+    if(!dateIso||dateIso===t)return new Date().toISOString();
+    const d=parseISO(dateIso);d.setHours(12,0,0,0);return d.toISOString();
+  }
+
+  function completeInstance(id, completedBy, scheduleChoice=null, completedDate=null) {
+    const i=instanceById(id); if(!i) return false;
+    const actualDate=completedDate||toISO(today());
+    if(actualDate>toISO(today())){toast('A completion date cannot be in the future');return false;}
+    const completedAt=completionTimestampForDate(actualDate);
     const now=new Date();
-    const actualDate=toISO(today());
     const intendedPlan=planDateOf(i)||actualDate;
     // Recurring housework is not cumulative debt. If several earlier cycles of
-    // the same chore piled up, doing the chore once today covers those missed
-    // cycles instead of asking for three vacuums in a row.
+    // the same chore piled up, doing the chore once on the logged completion day
+    // covers older missed cycles only through that day.
     const covered=i.choreId?state.instances.filter(x=>x.id!==i.id&&x.choreId===i.choreId&&!isTerminalInstance(x)&&x.originalDue&&x.originalDue<=actualDate):[];
     covered.forEach(x=>{x.skipped=true;x.skippedAt=now.toISOString();x.skipSource='covered-by-completion';x.pinned=false;});
     const satisfiedThrough=maxISO(i.originalDue,...covered.map(x=>x.originalDue));
-    i.completed=true; i.completedAt=now.toISOString(); i.completedBy=completedBy;
-    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt:now.toISOString(), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan, coveredCycles:covered.length });
+    i.completed=true; i.completedAt=completedAt; i.completedDate=actualDate; i.completedTimeKnown=actualDate===toISO(today()); i.completedBy=completedBy;
+    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt, completedDate:actualDate, completedTimeKnown:actualDate===toISO(today()), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan, coveredCycles:covered.length });
     if(i.choreId){
       const chore=choreById(i.choreId);
       if(chore){
         const behavior=scheduleChoice || chore.scheduleBehavior;
         if(chore.scheduleBehavior==='ask' && scheduleChoice) chore.lastCompletionChoice=scheduleChoice;
-        // Reality replaces the planned assumption. This happens before updating
-        // lastCompleted so already-planned future occurrences can be rebased.
-        if(behavior==='fixed')reflowFuturePlansToFixedRhythm(chore,i,'fixed-completion');
-        else rebaseFuturePlansAfterAssumptionChange(chore,i,intendedPlan,actualDate,'completion');
-        chore.lastCompleted=actualDate;
-        chore.lastSkippedDue=null;
-        chore.lastRolledDue=null;
-        chore.lastDueSatisfied=satisfiedThrough||i.originalDue||intendedPlan||actualDate;
-        chore.nextDueOverride=null;
-        if((chore.recurrenceType||'interval')==='interval' && behavior!=='fixed') {
-          chore.anchorDate=actualDate;
-        } else chore.anchorDate=chore.startDate||chore.anchorDate||i.originalDue||actualDate;
+        const priorLastCompleted=chore.lastCompleted||null;
+        const isNewestCompletion=!priorLastCompleted||actualDate>=priorLastCompleted;
+        // A forgotten older completion belongs in history but must not rewind a
+        // newer routine. Only the newest real completion is allowed to rebase it.
+        if(isNewestCompletion){
+          if(behavior==='fixed')reflowFuturePlansToFixedRhythm(chore,i,'fixed-completion');
+          else rebaseFuturePlansAfterAssumptionChange(chore,i,intendedPlan,actualDate,'completion');
+          chore.lastSkippedDue=null;
+          chore.lastRolledDue=null;
+          chore.nextDueOverride=null;
+          if((chore.recurrenceType||'interval')==='interval' && behavior!=='fixed') chore.anchorDate=actualDate;
+          else chore.anchorDate=chore.startDate||chore.anchorDate||i.originalDue||actualDate;
+        }
+        chore.lastCompleted=maxISO(priorLastCompleted,actualDate);
+        chore.lastDueSatisfied=maxISO(chore.lastDueSatisfied,satisfiedThrough||i.originalDue||intendedPlan||actualDate);
       }
     }
-    saveState('Marked complete');
+    saveState(actualDate===toISO(today())?'Marked complete':'Backdated completion logged');
     renderAll();
+    return true;
   }
 
   function skipInstance(id,source='manual',silent=false){
@@ -665,7 +677,7 @@
     // An unfinished plan stays attached to the day Mak intended to do it, but
     // Today keeps surfacing it until it is completed or deliberately moved.
     const open=todayOpenInstances();
-    const completed=state.instances.filter(i=>i.completed&&!i.cancelled&&String(i.completedAt||'').slice(0,10)===t);
+    const completed=state.instances.filter(i=>i.completed&&!i.cancelled&&(i.completedDate||String(i.completedAt||'').slice(0,10))===t);
     const missed=open.filter(i=>planDateOf(i)<t);
     const nudge=document.getElementById('recoveryNudge');
     if(nudge){
@@ -677,8 +689,7 @@
     const heading=document.getElementById('todayPlanHeading');if(heading)heading.textContent=missed.length?'What still needs attention':'Household chores';
     const list=document.getElementById('todayTaskList'); list.innerHTML='';
     open.sort((a,b)=>priorityScore(a)-priorityScore(b)).forEach(i=>list.appendChild(todayTaskCard(i)));
-    const mineCount=open.filter(i=>i.assignedTo!=='person2').length;const tyCount=open.filter(i=>i.assignedTo==='person2').length;
-    document.getElementById('todayCount').textContent=tyCount&&mineCount?`${mineCount} ${personLabel('person1')}/Either • ${tyCount} ${personLabel('person2')}`:`${open.length} left`;
+    document.getElementById('todayCount').textContent=`${open.length} left`;
     document.getElementById('todayEmpty').classList.toggle('hidden',open.length!==0);
     const banner=document.getElementById('doneBanner'); banner.classList.toggle('hidden',open.length!==0);
     if(open.length===0){
@@ -1069,7 +1080,7 @@
     const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.skipped?' skipped':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.skipped&&!i.historicalSeed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
     const plan=planDateOf(i);
-    const completedDate=i.completedAt?String(i.completedAt).slice(0,10):null;
+    const completedDate=i.completedDate||(i.completedAt?String(i.completedAt).slice(0,10):null);
     const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
       ?`<div class="original-due">${overdue?'Overdue • ':''}due ${formatShort(i.originalDue)}</div>`
       :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
@@ -1314,7 +1325,7 @@
     const stamp=h=>h.completedAt||h.skippedAt||'';
     const rows=state.history.slice().sort((a,b)=>stamp(b).localeCompare(stamp(a)));
     if(!rows.length){list.innerHTML='<div class="empty-state"><div class="empty-illustration">✓</div><h3>No history yet</h3><p>Completed and intentionally skipped chore cycles will show up here.</p></div>';return;}
-    rows.forEach(h=>{const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);const d=new Date(stamp(h));const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}</div><div class="history-who">${skipped?'Intentional':esc(personLabel(h.completedBy))}</div>`;list.appendChild(row);});
+    rows.forEach(h=>{const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);const d=new Date(stamp(h));const timeLine=!skipped&&h.completedTimeKnown===false?'':`<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`;const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}${timeLine}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}${!skipped&&h.completedTimeKnown===false?' <span class="badge">Logged later</span>':''}</div><div class="history-who">${skipped?'Intentional':esc(personLabel(h.completedBy))}</div>`;list.appendChild(row);});
   }
 
   function renderSettings(){
@@ -1430,10 +1441,23 @@
     saveState('Chore deleted');renderAll();
   }
 
+  function setCompletionDatePickerVisible(show){
+    const label=document.getElementById('completedDateLabel');
+    const input=document.getElementById('completedDate');
+    const toggle=document.getElementById('toggleCompletionDateBtn');
+    const confirm=document.getElementById('confirmCompleteBtn');
+    label.classList.toggle('hidden',!show);
+    if(!show)input.value=toISO(today());
+    toggle.textContent=show?'Use today instead':'Choose a different date';
+    confirm.textContent=show?'Mark done ✓':'Done today ✓';
+  }
+
   function openComplete(id){
     const i=instanceById(id);if(!i)return;
     document.getElementById('completeInstanceId').value=id;document.getElementById('completeTaskName').textContent=i.name;
     const select=document.getElementById('completedBy'); select.value=['person1','person2'].includes(i.assignedTo)?i.assignedTo:'person1';
+    const completedDate=document.getElementById('completedDate');completedDate.value=toISO(today());completedDate.max=toISO(today());
+    setCompletionDatePickerVisible(false);
     const chore=choreById(i.choreId);document.getElementById('completionScheduleChoice').classList.toggle('hidden',!chore||chore.scheduleBehavior!=='ask');
     document.getElementById('completeDialog').showModal();
   }
@@ -1495,7 +1519,6 @@
     score+=Math.min(24,age*4);
     if(i.pinned)score+=18;
     if(isSmallWinChore(chore))score+=mode==='bare'?32:mode==='light'?18:8;
-    if(i.assignedTo==='person2')score-=1000;
     return score;
   }
 
@@ -1524,15 +1547,13 @@
     const t=toISO(today());
     const open=todayOpenInstances();
     const draft=open.map(i=>({instance:i,action:null,date:null,smallWin:false,reason:''}));
-    const mine=draft.filter(x=>x.instance.assignedTo!=='person2').sort((a,b)=>capacityPriority(b.instance,mode)-capacityPriority(a.instance,mode));
-    const ty=draft.filter(x=>x.instance.assignedTo==='person2');
-    ty.forEach(x=>{x.action='keep';x.reason=`Assigned to ${personLabel('person2')} — it does not count against your personal capacity.`;});
+    const candidates=draft.sort((a,b)=>capacityPriority(b.instance,mode)-capacityPriority(a.instance,mode));
 
     const maxTasks=mode==='bare'?2:mode==='light'?4:5;
     const maxEffort=mode==='bare'?3:mode==='light'?6:9;
     let usedTasks=0,usedEffort=0;
     const kept=[];
-    mine.forEach(x=>{
+    candidates.forEach(x=>{
       const effort=effortScoreForChore(choreById(x.instance.choreId));
       const canKeep=usedTasks<maxTasks && (usedEffort+effort<=maxEffort || (x.instance.importance==='essential'&&usedTasks===0));
       if(canKeep){x.action='keep';kept.push(x);usedTasks++;usedEffort+=effort;}
@@ -1541,18 +1562,18 @@
     // On a low-capacity day, deliberately preserve at least one genuinely small
     // win when possible. It can be the only thing that makes starting feel doable.
     if(mode!=='catchup'&&!kept.some(x=>isSmallWinChore(choreById(x.instance.choreId)))){
-      const quick=mine.find(x=>x.action!=='keep'&&isSmallWinChore(choreById(x.instance.choreId)));
+      const quick=candidates.find(x=>x.action!=='keep'&&isSmallWinChore(choreById(x.instance.choreId)));
       if(quick){
         const replace=kept.slice().reverse().find(x=>x.instance.importance!=='essential'&&!x.instance.pinned);
         if(replace){replace.action=null;kept.splice(kept.indexOf(replace),1);}
         if(kept.length<maxTasks){quick.action='keep';kept.push(quick);}
       }
     }
-    const small=kept.filter(x=>x.instance.assignedTo!=='person2').sort((a,b)=>effortScoreForChore(choreById(a.instance.choreId))-effortScoreForChore(choreById(b.instance.choreId)))[0];
+    const small=kept.slice().sort((a,b)=>effortScoreForChore(choreById(a.instance.choreId))-effortScoreForChore(choreById(b.instance.choreId)))[0];
     if(small&&isSmallWinChore(choreById(small.instance.choreId))){small.smallWin=true;small.reason='Small win — intentionally chosen because starting small still counts.';}
 
     const provisionalLoads={};
-    mine.filter(x=>!x.action).forEach(x=>{
+    candidates.filter(x=>!x.action).forEach(x=>{
       const i=x.instance,chore=choreById(i.choreId);
       if(i.pinned){x.action='keep';x.reason='Pinned plan — kept unless you choose otherwise.';return;}
       if(i.importance==='essential'){
@@ -1569,17 +1590,15 @@
       }
       if(x.action==='move')x.date=suggestedRecoveryDate(i,provisionalLoads);
     });
-    kept.forEach(x=>{if(!x.reason)x.reason=x.instance.assignedTo==='either'?'Kept as one of today’s most useful household tasks.':'Kept as one of today’s most useful tasks.';});
+    kept.forEach(x=>{if(!x.reason)x.reason='Kept as one of today’s most useful household tasks.';});
     return draft;
   }
 
   function updateCapacitySummary(){
     const el=document.getElementById('capacityPlanSummary');if(!el)return;
     const counts={keep:0,move:0,skip:0};capacityDraft.forEach(x=>counts[x.action]=(counts[x.action]||0)+1);
-    const keepTy=capacityDraft.filter(x=>x.action==='keep'&&x.instance.assignedTo==='person2').length;
-    const keepMine=counts.keep-keepTy;
     const small=capacityDraft.find(x=>x.smallWin&&x.action==='keep');
-    el.innerHTML=`<strong>${keepMine} in your plan today</strong>${keepTy?` • ${keepTy} stay with ${esc(personLabel('person2'))}`:''} • ${counts.move} move • ${counts.skip} skip this cycle${small?`<br>✨ Small win: <strong>${esc(small.instance.name)}</strong>`:''}`;
+    el.innerHTML=`<strong>${counts.keep} in today’s plan</strong> • ${counts.move} move • ${counts.skip} skip this cycle${small?`<br>✨ Small win: <strong>${esc(small.instance.name)}</strong>`:''}`;
   }
 
   function renderCapacityPlan(){
@@ -1769,7 +1788,8 @@
     document.getElementById('nextDueDate').addEventListener('input',e=>{e.target.dataset.userEdited='1';});
     document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
-    document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;completeInstance(id,document.getElementById('completedBy').value,choice);document.getElementById('completeDialog').close();});
+    document.getElementById('toggleCompletionDateBtn').addEventListener('click',()=>{const label=document.getElementById('completedDateLabel');setCompletionDatePickerVisible(label.classList.contains('hidden'));});
+    document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;const date=document.getElementById('completedDate').value||toISO(today());if(completeInstance(id,document.getElementById('completedBy').value,choice,date))document.getElementById('completeDialog').close();});
     document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const assignee=document.getElementById('moveAssignee').value;const pinned=document.getElementById('pinPlanDate').checked;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,assignee,pinned);else moveInstance(target,date,assignee,pinned);document.getElementById('moveDialog').close();});
     document.getElementById('skipOccurrenceBtn').addEventListener('click',()=>{const id=document.getElementById('moveInstanceId').value;const i=instanceById(id);if(!i)return;const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';if(confirm(`Skip “${i.name}” for this ${word} cycle? This will not count as completed.`)){document.getElementById('moveDialog').close();skipInstance(id,'manual');}});
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.addEventListener('click',()=>{plannerViewMode=b.dataset.plannerView;plannerWeekStart=plannerViewMode==='month'?new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth(),1):startOfWeek(plannerWeekStart);renderPlanner();}));

@@ -381,12 +381,16 @@
       <div class="modal-head"><div><p class="section-kicker">MARK COMPLETE</p><h2 id="completeTaskName">Chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
       <input type="hidden" id="completeInstanceId" />
       <label>Who did it?<select id="completedBy"></select></label>
+      <div class="completion-date-tools">
+        <button type="button" class="text-btn completion-date-toggle" id="toggleCompletionDateBtn">Choose a different date</button>
+        <label id="completedDateLabel" class="hidden">Completed on<input type="date" id="completedDate" /></label>
+      </div>
       <div id="completionScheduleChoice" class="choice-box hidden">
-        <strong>Start tracking again from today?</strong>
-        <label class="radio-row"><input type="radio" name="scheduleChoice" value="completion" checked /> Yes — next due from today</label>
+        <strong>Start tracking again from the completion date?</strong>
+        <label class="radio-row"><input type="radio" name="scheduleChoice" value="completion" checked /> Yes — next due from when it was done</label>
         <label class="radio-row"><input type="radio" name="scheduleChoice" value="fixed" /> No — keep original rhythm</label>
       </div>
-      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmCompleteBtn" value="default">Done ✓</button></div>
+      <div class="modal-actions"><button class="text-btn" value="cancel">Cancel</button><button class="primary-btn" id="confirmCompleteBtn" value="default">Done today ✓</button></div>
     </form>
   </dialog>
 

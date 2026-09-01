@@ -2,6 +2,15 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.17
+
+- Added **Choose a different date** when marking a chore complete. Normal completion still defaults to today, while forgotten completions can be logged on the day they actually happened.
+- Backdated completions appear on their real calendar/history date and drive recurrence from that real completion date when they are the newest completion for the chore.
+- Logging an older forgotten completion cannot rewind a newer routine that has already been completed since.
+- **Reset Today now treats Mak, Ty, and Either chores equally** when calculating Bare minimum / Light day / Catch-up plans. Assignment remains visible, but no unfinished chore is automatically protected just because it belongs to Ty.
+- Today’s remaining count is once again a single household count rather than splitting Mak/Either from Ty.
+- Bumped the PWA cache to `household-v1-17`.
+
 ## v1.16
 
 - Rebuilt **Reset Today** on phones as a full-width bottom sheet instead of a cramped desktop-style dialog.
@@ -17,14 +26,14 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 - Added **🪫 Reset today** for the days when the backlog is bigger than your actual capacity.
 - Capacity levels: **Bare minimum**, **Light day**, and **Help me catch up**. The app proposes a recovery plan before changing anything.
 - Recovery plans split chores into **Keep today / Move / Skip this cycle**, and every suggestion can be changed before applying it.
-- Bare-minimum planning deliberately favors a **small win** and treats chores assigned to Ty as outside Mak's personal capacity count.
+- Bare-minimum planning deliberately favors a **small win**; v1.17 later changed capacity planning so all unfinished household chores count equally regardless of assignee.
 - **Essential chores are never auto-suggested for skipping**; they can still be manually skipped when real life calls for it.
 - Added **Skip this occurrence** under a planned chore's ••• menu. Skipping is recorded separately from completion.
 - Completion-based skips advance to the next target without pretending the skipped chore was done; fixed/calendar rhythms stay anchored to their normal next occurrence.
 - Household Overview understands **Skipped this cycle** as a neutral state: it does not reset freshness, but it also stops demanding that missed cycle until the next target.
 - Added a **Date meaning** setting per chore: **Target day — flexible** or **Fixed / calendar-dependent**. This lets routines stay concrete without treating every target date like a hard rule.
 - Today now collapses multiple missed occurrences of the same recurring chore into the current occurrence, so missed housework does not become duplicate chore debt. Completing the chore once covers earlier missed cycles up through that day.
-- Today separates the remaining count when relevant (for example **Mak/Either • Ty**) so chores assigned to Ty do not read like Mak's personal workload.
+- v1.15 briefly separated Today counts by assignee; v1.17 returned this to one household count so assignment does not imply a chore can be ignored when it is still unfinished.
 - **Quick win** suggestions now use a lightweight effort heuristic (and optional `quick`/`easy`/`small win` tags) rather than only importance.
 - Bumped the PWA cache to `household-v1-15`.
 
