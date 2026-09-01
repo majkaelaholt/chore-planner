@@ -9,7 +9,7 @@
   let plannerWeekStart = startOfWeek(new Date());
   let plannerViewMode = 'week';
   let activeCategory = 'All';
-  let choreFilters = { importance:'all', assignee:'all', tag:'all', status:'all' };
+  let choreFilters = { importance:'all', effort:'all', assignee:'all', tag:'all', status:'all' };
   let choreSort = { key:'name', dir:'asc' };
   let selectedChoreIds = new Set();
   let energyMode = 'soon';
@@ -971,6 +971,33 @@
     renderPlanner();
   }
 
+  function addPlannerLongPress(el,handler){
+    let timer=null,startX=0,startY=0,longPressed=false;
+    const clear=()=>{if(timer){clearTimeout(timer);timer=null;}};
+    el.addEventListener('pointerdown',e=>{
+      if(e.pointerType==='mouse')return;
+      clear();longPressed=false;startX=e.clientX;startY=e.clientY;
+      timer=setTimeout(()=>{
+        timer=null;longPressed=true;
+        el.dataset.longPressed='1';
+        try{navigator.vibrate?.(12);}catch(_e){}
+        handler({x:e.clientX,y:e.clientY});
+      },550);
+    });
+    el.addEventListener('pointermove',e=>{
+      if(!timer)return;
+      if(Math.abs(e.clientX-startX)>10||Math.abs(e.clientY-startY)>10)clear();
+    });
+    el.addEventListener('pointerup',clear);
+    el.addEventListener('pointercancel',clear);
+    el.addEventListener('click',e=>{
+      if(longPressed||el.dataset.longPressed==='1'){
+        e.preventDefault();e.stopPropagation();
+        longPressed=false;delete el.dataset.longPressed;
+      }
+    },true);
+  }
+
   function compactPlannerItem(item){
     const btn=document.createElement('button');
     btn.type='button';
@@ -978,14 +1005,18 @@
       btn.className=`calendar-task forecast ${assigneeClass(item.assignedTo)}`;
       btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(personLabel(item.assignedTo))}</span>`;
       btn.title=`${item.name} • ${routineDateWord(choreById(item.choreId),true)} ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
-      btn.addEventListener('click',e=>{e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
+      btn.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
+      addPlannerLongPress(btn,()=>openForecastMove(item.choreId,item.dueDate));
     } else {
       const owner=item.assignedTo||'either';
       btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.skipped?' skipped':''}${item.pinned?' pinned':''}`;
       btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':item.skipped?(item.skipSource==='covered-by-completion'?'rolled forward':'skipped'):esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
       btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.skipped?`${item.name} • ${item.skipSource==='covered-by-completion'?'covered by a later completion':'skipped this cycle'}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
-      btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else if(item.completed)toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`);else openPlannerQuickMenu(item.id,btn);});
+      if(item.historicalSeed||item.skipped||item.completed){
+        btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`);});
+      }
       btn.addEventListener('contextmenu',e=>{if(item.historicalSeed||item.skipped||item.completed)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
+      if(!item.historicalSeed&&!item.skipped&&!item.completed)addPlannerLongPress(btn,()=>openPlannerQuickMenu(item.id));
     }
     return btn;
   }
@@ -1038,7 +1069,7 @@
     if(plannerViewMode==='week'){
       title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Routine dates are targets unless they are truly fixed. Planned is your intention; completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
-      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are your current plan. A target day gives structure, not a contract. Use ••• (or right-click on desktop) to mark done, backdate a completion, move, or skip one cycle. 📌 pinned dates stay put.';
+      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are your current plan. A target day gives structure, not a contract. Right-click a card on desktop, or press and hold on mobile, for its actions. 📌 pinned dates stay put.';
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
       for(let d=0;d<7;d++){
@@ -1146,10 +1177,10 @@
     const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
       ?`<div class="original-due">${overdue?'Past target • ':''}${routineDateWord(chore,true)} ${formatShort(i.originalDue)}</div>`
       :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
-    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span>${i.historicalSeed||i.skipped?'':`<button class="planner-card-menu" aria-label="Chore actions">•••</button>`}</div>${timing}`;
+    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span></div>${timing}`;
     el.addEventListener('dragstart',e=>{if(!i.historicalSeed&&!i.skipped)e.dataTransfer.setData('text/plain',i.id);});
-    el.querySelector('.planner-card-menu')?.addEventListener('click',e=>{e.stopPropagation();openPlannerQuickMenu(i.id,e.currentTarget);});
     el.addEventListener('contextmenu',e=>{if(i.historicalSeed||i.skipped)return;e.preventDefault();openPlannerQuickMenu(i.id,null,{x:e.clientX,y:e.clientY});});
+    if(!i.historicalSeed&&!i.skipped)addPlannerLongPress(el,()=>openPlannerQuickMenu(i.id));
     el.addEventListener('dblclick',()=>{if(!i.completed&&!i.skipped)openComplete(i.id);});
     return el;
   }
@@ -1161,10 +1192,11 @@
     el.draggable=true;
     el.dataset.choreId=item.choreId;
     el.dataset.dueDate=item.dueDate;
-    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(personLabel(item.assignedTo))}</span><button class="planner-card-menu" aria-label="Plan this occurrence">•••</button></div><div class="forecast-due">${routineDateWord(chore,true)} ${formatShort(item.dueDate)}</div>`;
-    el.title=chore?`${item.name} • ${recurrenceText(chore)}`:`${item.name} • forecast`;
+    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(personLabel(item.assignedTo))}</span></div><div class="forecast-due">${routineDateWord(chore,true)} ${formatShort(item.dueDate)}</div>`;
+    el.title=chore?`${item.name} • ${recurrenceText(chore)} • right-click or hold to plan`:`${item.name} • forecast • right-click or hold to plan`;
     el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',forecastMoveKey(item.choreId,item.dueDate)));
-    el.querySelector('.planner-card-menu').addEventListener('click',()=>openForecastMove(item.choreId,item.dueDate));
+    el.addEventListener('contextmenu',e=>{e.preventDefault();openForecastMove(item.choreId,item.dueDate);});
+    addPlannerLongPress(el,()=>openForecastMove(item.choreId,item.dueDate));
     return el;
   }
 
@@ -1193,15 +1225,18 @@
   function filteredSortedChores(){
     const q=(document.getElementById('choreSearch')?.value||'').trim().toLowerCase();
     const importance=choreFilters.importance;
+    const effort=choreFilters.effort;
     const assignee=choreFilters.assignee;
     const tag=choreFilters.tag;
     const status=choreFilters.status;
     const importanceRank={essential:0,regular:1,low:2};
+    const effortRank={auto:0,quick:1,medium:2,bigger:3};
     const dir=choreSort.dir==='desc'?-1:1;
     const chores=state.chores.filter(c=>{
       if(c.active===false) return false;
       if(activeCategory!=='All'&&c.category!==activeCategory) return false;
       if(importance!=='all'&&c.importance!==importance) return false;
+      if(effort!=='all'&&(c.effort||'auto')!==effort) return false;
       if(assignee!=='all'&&normalizeAssignee(c.assignee)!==assignee) return false;
       if(tag!=='all'&&!normalizeTags(c.tags).some(t=>tagKey(t)===tagKey(tag))) return false;
       if(status!=='all'){
@@ -1222,6 +1257,7 @@
       if(key==='category') return c.category.toLowerCase();
       if(key==='recurrence') return recurrenceDays(c);
       if(key==='importance') return importanceRank[c.importance]??1;
+      if(key==='effort') return effortRank[c.effort||'auto']??0;
       if(key==='lastCompleted') return c.lastCompleted?parseISO(c.lastCompleted).getTime():0;
       if(key==='nextDue') return parseISO(nextDue(c)).getTime();
       if(key==='assignee') return personLabel(normalizeAssignee(c.assignee)).toLowerCase();
@@ -1284,6 +1320,16 @@
     return `<div class="chore-next-stack"><strong>${plan.pinned?'📌 ':''}Planned ${esc(planText.toLowerCase())}</strong><span>${planned===(plan.originalDue||due)?`${word} same day`:`${word} ${esc(dueText.toLowerCase())}`}</span></div>`;
   }
 
+  function effortSettingMarkup(chore){
+    const setting=chore?.effort||'auto';
+    if(setting==='auto'){
+      const effective=effortLabel(effortScoreForChore(chore));
+      return `<span class="effort-badge auto">Auto <small>→ ${esc(effective)}</small></span>`;
+    }
+    const label={quick:'Quick',medium:'Medium',bigger:'Bigger'}[setting]||'Auto';
+    return `<span class="effort-badge ${esc(setting)}">${esc(label)}</span>`;
+  }
+
   function renderChores(){
     const filters=document.getElementById('categoryFilters'); filters.innerHTML='';
     ['All',...CATEGORIES].forEach(cat=>{const b=document.createElement('button');b.className='chip'+(activeCategory===cat?' active':'');b.textContent=cat;b.addEventListener('click',()=>{activeCategory=cat;renderChores();});filters.appendChild(b);});
@@ -1301,6 +1347,7 @@
       if(tags.some(t=>tagKey(t)===tagKey(choreFilters.tag))) tagFilter.value=tagKey(choreFilters.tag); else {choreFilters.tag='all';tagFilter.value='all';}
     }
     const imp=document.getElementById('importanceFilter');if(imp)imp.value=choreFilters.importance;
+    const effortFilter=document.getElementById('effortFilter');if(effortFilter)effortFilter.value=choreFilters.effort;
     const status=document.getElementById('dueStatusFilter');if(status)status.value=choreFilters.status;
     const sortSelect=document.getElementById('choreSortSelect');
     if(sortSelect){const v=`${choreSort.key}:${choreSort.dir}`;if([...sortSelect.options].some(o=>o.value===v))sortSelect.value=v;}
@@ -1315,20 +1362,20 @@
     const body=document.getElementById('choreTableBody');body.innerHTML='';
     const mobile=document.getElementById('choreCardsMobile');mobile.innerHTML='';
     if(!chores.length){
-      body.innerHTML='<tr><td colspan="9"><div class="table-empty">No chores match these filters.</div></td></tr>';
+      body.innerHTML='<tr><td colspan="10"><div class="table-empty">No chores match these filters.</div></td></tr>';
       mobile.innerHTML='<div class="empty-state compact-empty"><h3>No matching chores</h3><p>Try clearing a filter or search.</p></div>';
     }
     chores.forEach(c=>{
       const checked=selectedChoreIds.has(c.id);
       const tags=tagMarkup(c.tags);
       const tr=document.createElement('tr');tr.classList.toggle('selected-row',checked);
-      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${relativeDate(c.lastCompleted)}</td><td>${choreNextMarkup(c)}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
+      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${effortSettingMarkup(c)}</td><td>${relativeDate(c.lastCompleted)}</td><td>${choreNextMarkup(c)}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
       tr.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       tr.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id));
       tr.querySelector('.delete-chore').addEventListener('click',()=>deleteChore(c.id)); body.appendChild(tr);
 
       const card=document.createElement('div'); card.className='chore-mobile-card'+(checked?' selected-row':'');
-      card.innerHTML=`<div class="chore-mobile-top"><div class="mobile-select-title"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /><div><div class="chore-mobile-title">${CATEGORY_EMOJI[c.category]} ${esc(c.name)}</div><div class="chore-mobile-meta"><span class="badge">${esc(c.category)}</span><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></div>${tags?`<div class="tag-row">${tags}</div>`:''}</div></div><button class="text-btn edit-chore">Edit</button></div><div class="chore-mobile-dates"><div>Last: ${relativeDate(c.lastCompleted)}</div><div>${choreNextMarkup(c)}</div></div>`;
+      card.innerHTML=`<div class="chore-mobile-top"><div class="mobile-select-title"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /><div><div class="chore-mobile-title">${CATEGORY_EMOJI[c.category]} ${esc(c.name)}</div><div class="chore-mobile-meta"><span class="badge">${esc(c.category)}</span><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span>${effortSettingMarkup(c)}</div>${tags?`<div class="tag-row">${tags}</div>`:''}</div></div><button class="text-btn edit-chore">Edit</button></div><div class="chore-mobile-dates"><div>Last: ${relativeDate(c.lastCompleted)}</div><div>${choreNextMarkup(c)}</div></div>`;
       card.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       card.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id)); mobile.appendChild(card);
     });
@@ -1878,12 +1925,13 @@
     document.getElementById('addChoreBtn').addEventListener('click',()=>openChore());
     document.getElementById('choreSearch').addEventListener('input',renderChores);
     document.getElementById('importanceFilter').addEventListener('change',e=>{choreFilters.importance=e.target.value;renderChores();});
+    document.getElementById('effortFilter').addEventListener('change',e=>{choreFilters.effort=e.target.value;renderChores();});
     document.getElementById('assigneeFilter').addEventListener('change',e=>{choreFilters.assignee=e.target.value;renderChores();});
     document.getElementById('tagFilter').addEventListener('change',e=>{choreFilters.tag=e.target.value;renderChores();});
     document.getElementById('dueStatusFilter').addEventListener('change',e=>{choreFilters.status=e.target.value;renderChores();});
     document.getElementById('choreSortSelect').addEventListener('change',e=>{const [key,dir]=e.target.value.split(':');setChoreSort(key,dir);});
     document.querySelectorAll('.sort-head').forEach(btn=>btn.addEventListener('click',()=>setChoreSort(btn.dataset.sort)));
-    document.getElementById('clearChoreFiltersBtn').addEventListener('click',()=>{activeCategory='All';choreFilters={importance:'all',assignee:'all',tag:'all',status:'all'};document.getElementById('choreSearch').value='';renderChores();});
+    document.getElementById('clearChoreFiltersBtn').addEventListener('click',()=>{activeCategory='All';choreFilters={importance:'all',effort:'all',assignee:'all',tag:'all',status:'all'};document.getElementById('choreSearch').value='';renderChores();});
     document.getElementById('selectAllFilteredBtn').addEventListener('click',()=>{const shown=filteredSortedChores();const all=shown.length&&shown.every(c=>selectedChoreIds.has(c.id));shown.forEach(c=>all?selectedChoreIds.delete(c.id):selectedChoreIds.add(c.id));renderChores();});
     document.getElementById('selectVisibleCheckbox').addEventListener('change',e=>{const shown=filteredSortedChores();shown.forEach(c=>e.target.checked?selectedChoreIds.add(c.id):selectedChoreIds.delete(c.id));renderChores();});
     document.getElementById('clearSelectionBtn').addEventListener('click',()=>{selectedChoreIds.clear();renderChores();});

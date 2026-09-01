@@ -191,6 +191,7 @@
         </div>
         <div class="chore-filter-row">
           <label>Importance<select id="importanceFilter"><option value="all">All importance</option><option value="essential">Essential</option><option value="regular">Regular</option><option value="low">Low stakes</option></select></label>
+          <label>Effort<select id="effortFilter"><option value="all">All effort</option><option value="auto">Auto</option><option value="quick">Quick</option><option value="medium">Medium</option><option value="bigger">Bigger</option></select></label>
           <label>Default person<select id="assigneeFilter"><option value="all">All people</option></select></label>
           <label>Tag<select id="tagFilter"><option value="all">All tags</option></select></label>
           <label>Status<select id="dueStatusFilter"><option value="all">Any due status</option><option value="due">Due now / overdue</option><option value="overdue">Overdue only</option><option value="upcoming">Upcoming</option><option value="never">Never completed</option></select></label>
@@ -200,6 +201,7 @@
             <option value="lastCompleted:desc">Last done — newest</option><option value="lastCompleted:asc">Last done — oldest / never</option>
             <option value="recurrence:asc">Most frequent first</option><option value="recurrence:desc">Least frequent first</option>
             <option value="importance:asc">Importance — highest first</option><option value="importance:desc">Importance — lowest first</option>
+            <option value="effort:asc">Effort — Auto → Bigger</option><option value="effort:desc">Effort — Bigger → Auto</option>
             <option value="category:asc">Category A–Z</option><option value="category:desc">Category Z–A</option>
             <option value="assignee:asc">Default person A–Z</option><option value="assignee:desc">Default person Z–A</option>
           </select></label>
@@ -225,6 +227,7 @@
               <th><button class="sort-head" data-sort="category">Category <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="recurrence">Rhythm <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="importance">Importance <span class="sort-indicator"></span></button></th>
+              <th><button class="sort-head" data-sort="effort">Effort <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="lastCompleted">Last done <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="nextDue">Next / plan <span class="sort-indicator"></span></button></th>
               <th><button class="sort-head" data-sort="assignee">Default <span class="sort-indicator"></span></button></th>

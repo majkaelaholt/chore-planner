@@ -2,6 +2,22 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.21
+
+- Removed the visible `•••` buttons from Planner cards to reduce calendar clutter.
+- Desktop planner actions now use **right-click** on active cards; right-clicking a forecast opens its planning dialog.
+- Touch/mobile planner actions now use **press and hold** on a card. Active cards open the quick-action menu; forecast cards open Plan occurrence.
+- Added touch-callout suppression on planner cards so iPhone long-press opens the app action sheet instead of the browser callout.
+- Updated Planner guidance to explain right-click / press-and-hold interaction.
+- Bumped the PWA cache to `household-v1-21`.
+
+## v1.20
+- Added **Effort** directly to the Chores list so Auto / Quick / Medium / Bigger settings are visible before batch editing.
+- Auto effort shows its current inferred level (for example **Auto → Medium**) while still making it clear the chore is set to Auto.
+- Added an **Effort filter** so chores can be narrowed to Auto, Quick, Medium, or Bigger, then selected and batch edited.
+- Added Effort sorting to the desktop table and Sort menu, and Effort badges to mobile chore cards.
+- Bumped the PWA cache to `household-v1-20`.
+
 ## v1.19
 - Cleanup release after the planner/recovery overhaul.
 - Mobile **More** is now a real menu with **History** and **Settings**; History is no longer inaccessible from the phone navigation.
