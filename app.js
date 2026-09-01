@@ -19,7 +19,7 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 2.1,
+    version: 2.2,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -74,7 +74,7 @@
     const due = addDays(today(), Number(starterDueInDays)||0);
     return {
       id: uid('chore'), name, category, recurrenceType:'interval', recurrenceValue, recurrenceUnit, importance, assignee,
-      scheduleBehavior, dateMeaning:scheduleBehavior==='fixed'?'fixed':'target', areas, tags: [], graceOverride: null,
+      scheduleBehavior, dateMeaning:scheduleBehavior==='fixed'?'fixed':'target', effort:'auto', areas, tags: [], graceOverride: null,
       lastCompleted: null, lastDueSatisfied: null,
       startDate: toISO(due), nextDueOverride: null,
       // anchorDate is kept for backward-compatible imports, but startDate is the v1.4 schedule anchor.
@@ -101,7 +101,7 @@
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 2.1,
+      version: 2.2,
       chores,
       instances: normalizeInstancesForVersion(s.instances,s.version,chores),
       history: Array.isArray(s.history) ? s.history : [],
@@ -186,6 +186,7 @@
     out.lastSkippedDue=out.lastSkippedDue||null;
     out.lastRolledDue=out.lastRolledDue||null;
     out.dateMeaning=out.dateMeaning||(((out.recurrenceType||'interval')==='interval'&&out.scheduleBehavior==='fixed')?'fixed':'target');
+    out.effort=['auto','quick','medium','bigger'].includes(out.effort)?out.effort:'auto';
     if(!out.startDate){
       // v1.3 stored an anchor one interval before the first due date. Migrate that into a real first-due/start date.
       const legacyBase=out.anchorDate||out.lastCompleted||(out.createdAt?out.createdAt.slice(0,10):toISO(today()));
@@ -598,7 +599,7 @@
       chore.lastDueSatisfied=maxISO(chore.lastDueSatisfied,cycleDue);
       chore.nextDueOverride=null;
     }
-    if(!silent){saveState('Skipped this occurrence');renderAll();}
+    if(!silent){saveState('Skipped this cycle');renderAll();}
   }
 
   function moveInstance(id,date,assignee,pinned=false,silent=false) {
@@ -681,10 +682,14 @@
     const missed=open.filter(i=>planDateOf(i)<t);
     const nudge=document.getElementById('recoveryNudge');
     if(nudge){
-      const show=missed.length>=2||open.length>=5;
-      nudge.classList.toggle('hidden',!show);
+      nudge.classList.toggle('hidden',open.length===0);
+      const title=nudge.querySelector('strong');
       const text=nudge.querySelector('span');
-      if(text&&show)text.textContent=`${missed.length?`${missed.length} earlier plan${missed.length===1?' is':'s are'} still hanging around. `:''}You can keep what matters, move the rest, or intentionally let a cycle go.`;
+      const piled=missed.length>=2||open.length>=5;
+      if(title)title.textContent=piled?'Plans piled up?':'Need a lighter day?';
+      if(text)text.textContent=piled
+        ?`${missed.length?`${missed.length} earlier plan${missed.length===1?' is':'s are'} still hanging around. `:''}Keep what matters, move the rest, or intentionally let a cycle go.`
+        :'Reset Today can help you keep today realistic before the list starts feeling heavy.';
     }
     const heading=document.getElementById('todayPlanHeading');if(heading)heading.textContent=missed.length?'What still needs attention':'Household chores';
     const list=document.getElementById('todayTaskList'); list.innerHTML='';
@@ -979,7 +984,8 @@
       btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.skipped?' skipped':''}${item.pinned?' pinned':''}`;
       btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':item.skipped?(item.skipSource==='covered-by-completion'?'rolled forward':'skipped'):esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
       btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.skipped?`${item.name} • ${item.skipSource==='covered-by-completion'?'covered by a later completion':'skipped this cycle'}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
-      btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — it will return at the next routine target');else item.completed?toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`):openMove(item.id);});
+      btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else if(item.completed)toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`);else openPlannerQuickMenu(item.id,btn);});
+      btn.addEventListener('contextmenu',e=>{if(item.historicalSeed||item.skipped||item.completed)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
     }
     return btn;
   }
@@ -1032,7 +1038,7 @@
     if(plannerViewMode==='week'){
       title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Routine dates are targets unless they are truly fixed. Planned is your intention; completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
-      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are plans. A target day gives you structure, not a contract. Miss it and you can still do the chore tomorrow, move it, or intentionally skip that cycle. 📌 pinned dates stay put.';
+      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are your current plan. A target day gives structure, not a contract. Use ••• (or right-click on desktop) to mark done, backdate a completion, move, or skip one cycle. 📌 pinned dates stay put.';
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
       for(let d=0;d<7;d++){
@@ -1075,18 +1081,75 @@
     renderCalendarPlanner(period);
   }
 
+  let plannerQuickMenuEl=null;
+  function closePlannerQuickMenu(){
+    if(plannerQuickMenuEl){plannerQuickMenuEl.remove();plannerQuickMenuEl=null;}
+  }
+
+  function positionPlannerQuickMenu(menu,anchor=null,point=null){
+    const mobile=window.matchMedia('(max-width: 640px)').matches;
+    if(mobile){
+      menu.classList.add('mobile-sheet');
+      return;
+    }
+    const rect=anchor?.getBoundingClientRect();
+    let x=point?.x ?? (rect?rect.right:16);
+    let y=point?.y ?? (rect?rect.bottom:16);
+    const pad=10;
+    const width=Math.min(240,window.innerWidth-pad*2);
+    menu.style.width=`${width}px`;
+    menu.style.left=`${Math.max(pad,Math.min(x,window.innerWidth-width-pad))}px`;
+    menu.style.top=`${Math.max(pad,Math.min(y,window.innerHeight-250))}px`;
+  }
+
+  function openPlannerQuickMenu(id,anchor=null,point=null){
+    const i=instanceById(id);if(!i)return;
+    closePlannerQuickMenu();
+    const menu=document.createElement('div');plannerQuickMenuEl=menu;
+    menu.className='planner-quick-menu';menu.setAttribute('role','menu');
+    const active=!i.completed&&!i.skipped&&!i.cancelled&&!i.historicalSeed;
+    const actions=[];
+    if(active){
+      actions.push(['done','✓ Done today']);
+      actions.push(['done-date','📅 Mark done on…']);
+      actions.push(['move','↪ Move / re-plan']);
+      actions.push(['skip','⏭ Skip this cycle']);
+    }
+    if(i.choreId)actions.push(['edit','✎ Edit chore']);
+    menu.innerHTML=`<div class="planner-quick-title">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div>${actions.map(([key,label])=>`<button type="button" data-action="${key}" role="menuitem">${label}</button>`).join('')}<button type="button" class="planner-quick-cancel" data-action="close">Cancel</button>`;
+    document.body.appendChild(menu);positionPlannerQuickMenu(menu,anchor,point);
+    menu.addEventListener('click',e=>{
+      const btn=e.target.closest('button[data-action]');if(!btn)return;
+      const action=btn.dataset.action;closePlannerQuickMenu();
+      if(action==='done')openComplete(id,false);
+      else if(action==='done-date')openComplete(id,true);
+      else if(action==='move')openMove(id);
+      else if(action==='skip'){
+        const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';
+        if(confirm(`Skip “${i.name}” for this ${word} cycle? This occurrence will be retired, but the next recurrence will still appear.`))skipInstance(id,'manual');
+      }else if(action==='edit'&&i.choreId)openChore(i.choreId);
+    });
+    requestAnimationFrame(()=>document.addEventListener('pointerdown',plannerQuickOutside,{once:true}));
+  }
+
+  function plannerQuickOutside(e){
+    if(plannerQuickMenuEl&&!plannerQuickMenuEl.contains(e.target))closePlannerQuickMenu();
+  }
+
   function plannerCard(i){
     const owner=i.assignedTo||'either';
     const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.skipped?' skipped':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.skipped&&!i.historicalSeed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
     const plan=planDateOf(i);
+    const chore=choreById(i.choreId);
     const completedDate=i.completedDate||(i.completedAt?String(i.completedAt).slice(0,10):null);
     const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
-      ?`<div class="original-due">${overdue?'Overdue • ':''}due ${formatShort(i.originalDue)}</div>`
+      ?`<div class="original-due">${overdue?'Past target • ':''}${routineDateWord(chore,true)} ${formatShort(i.originalDue)}</div>`
       :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
-    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span>${i.historicalSeed||i.skipped?'':`<button class="planner-card-menu" aria-label="Move or edit">•••</button>`}</div>${timing}`;
+    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span>${i.historicalSeed||i.skipped?'':`<button class="planner-card-menu" aria-label="Chore actions">•••</button>`}</div>${timing}`;
     el.addEventListener('dragstart',e=>{if(!i.historicalSeed&&!i.skipped)e.dataTransfer.setData('text/plain',i.id);});
-    el.querySelector('.planner-card-menu')?.addEventListener('click',()=>i.completed?toast(`Completed${i.completedBy?` by ${personLabel(i.completedBy)}`:''}`):openMove(i.id));
+    el.querySelector('.planner-card-menu')?.addEventListener('click',e=>{e.stopPropagation();openPlannerQuickMenu(i.id,e.currentTarget);});
+    el.addEventListener('contextmenu',e=>{if(i.historicalSeed||i.skipped)return;e.preventDefault();openPlannerQuickMenu(i.id,null,{x:e.clientX,y:e.clientY});});
     el.addEventListener('dblclick',()=>{if(!i.completed&&!i.skipped)openComplete(i.id);});
     return el;
   }
@@ -1276,7 +1339,7 @@
     if(!selectedChoreIds.size) return;
     const category=document.getElementById('batchCategory');
     category.innerHTML='<option value="">No change</option>'+CATEGORIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchAssignee').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
+    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchAssignee').value='';document.getElementById('batchEffort').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
     document.getElementById('batchTagsLabel').classList.add('hidden');
     document.getElementById('batchEditSummary').textContent=`Editing ${selectedChoreIds.size} selected chore${selectedChoreIds.size===1?'':'s'}. Only chosen fields will change.`;
     document.getElementById('batchEditDialog').showModal();
@@ -1287,14 +1350,16 @@
     const category=document.getElementById('batchCategory').value;
     const importance=document.getElementById('batchImportance').value;
     const assignee=document.getElementById('batchAssignee').value;
+    const effort=document.getElementById('batchEffort').value;
     const tagMode=document.getElementById('batchTagMode').value;
     const tags=normalizeTags(document.getElementById('batchTags').value);
-    if(!category&&!importance&&!assignee&&tagMode==='none'){toast('Choose something to change');return;}
+    if(!category&&!importance&&!assignee&&!effort&&tagMode==='none'){toast('Choose something to change');return;}
     state.chores.forEach(c=>{
       if(!ids.has(c.id))return;
       if(category)c.category=category;
       if(importance)c.importance=importance;
       if(assignee)c.assignee=assignee;
+      if(effort)c.effort=effort;
       const current=normalizeTags(c.tags);
       if(tagMode==='replace')c.tags=tags;
       if(tagMode==='clear')c.tags=[];
@@ -1374,7 +1439,7 @@
     document.getElementById('weeklyInterval').value=type==='weekly'?(c?.recurrenceValue||1):1;document.getElementById('weeklyDay').value=String(c?.weekday??0);
     document.getElementById('monthlyDayInterval').value=type==='monthly-day'?(c?.recurrenceValue||1):1;document.getElementById('monthDay').value=c?.monthDay||1;
     document.getElementById('monthlyWeekdayInterval').value=type==='monthly-weekday'?(c?.recurrenceValue||1):1;document.getElementById('monthOrdinal').value=String(c?.monthOrdinal??'1');document.getElementById('monthWeekday').value=String(c?.monthWeekday??0);
-    document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreGrace').value=c?.graceOverride??'';const behavior=document.getElementById('scheduleBehavior');behavior.value=type==='interval'?(c?.scheduleBehavior||'completion'):'fixed';behavior.dataset.intervalValue=type==='interval'?(c?.scheduleBehavior||'completion'):'completion';document.getElementById('choreDateMeaning').value=c?.dateMeaning||(((type==='interval')&&(c?.scheduleBehavior==='fixed'))?'fixed':'target');document.getElementById('lastCompleted').value=c?.lastCompleted||'';
+    document.getElementById('choreImportance').value=c?.importance||'regular';document.getElementById('choreEffort').value=c?.effort||'auto';document.getElementById('choreGrace').value=c?.graceOverride??'';const behavior=document.getElementById('scheduleBehavior');behavior.value=type==='interval'?(c?.scheduleBehavior||'completion'):'fixed';behavior.dataset.intervalValue=type==='interval'?(c?.scheduleBehavior||'completion'):'completion';document.getElementById('choreDateMeaning').value=c?.dateMeaning||(((type==='interval')&&(c?.scheduleBehavior==='fixed'))?'fixed':'target');document.getElementById('lastCompleted').value=c?.lastCompleted||'';
     const startDate=c?.startDate||toISO(today());document.getElementById('startDate').value=startDate;
     const nextInput=document.getElementById('nextDueDate');const shownNext=c?nextDue(c):startDate;nextInput.value=shownNext;nextInput.dataset.natural=c?nextDue(c,true):startDate;nextInput.dataset.hadOverride=c?.nextDueOverride?'1':'0';nextInput.dataset.userEdited='0';
     document.getElementById('choreTags').value=normalizeTags(c?.tags).join(', ');document.getElementById('choreAreas').value=c?.areas||'';setRecurrenceFields(type);d.showModal();
@@ -1414,7 +1479,7 @@
     const data={
       id:id||uid('chore'),name:document.getElementById('choreName').value.trim(),category:document.getElementById('choreCategory').value,
       assignee:document.getElementById('choreAssignee').value,...recurrence,
-      importance:document.getElementById('choreImportance').value,graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:recurrence.recurrenceType==='interval'?document.getElementById('scheduleBehavior').value:'fixed',dateMeaning:document.getElementById('choreDateMeaning').value||'target',
+      importance:document.getElementById('choreImportance').value,effort:document.getElementById('choreEffort').value||'auto',graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:recurrence.recurrenceType==='interval'?document.getElementById('scheduleBehavior').value:'fixed',dateMeaning:document.getElementById('choreDateMeaning').value||'target',
       lastCompleted:submittedLastCompleted,lastDueSatisfied:submittedLastDueSatisfied,tags:normalizeTags(document.getElementById('choreTags').value),areas:document.getElementById('choreAreas').value.trim(),active:true,
       startDate,nextDueOverride:null,anchorDate:startDate,createdAt:existing?.createdAt||new Date().toISOString()
     };
@@ -1452,12 +1517,12 @@
     confirm.textContent=show?'Mark done ✓':'Done today ✓';
   }
 
-  function openComplete(id){
+  function openComplete(id,chooseDate=false){
     const i=instanceById(id);if(!i)return;
     document.getElementById('completeInstanceId').value=id;document.getElementById('completeTaskName').textContent=i.name;
     const select=document.getElementById('completedBy'); select.value=['person1','person2'].includes(i.assignedTo)?i.assignedTo:'person1';
     const completedDate=document.getElementById('completedDate');completedDate.value=toISO(today());completedDate.max=toISO(today());
-    setCompletionDatePickerVisible(false);
+    setCompletionDatePickerVisible(Boolean(chooseDate));
     const chore=choreById(i.choreId);document.getElementById('completionScheduleChoice').classList.toggle('hidden',!chore||chore.scheduleBehavior!=='ask');
     document.getElementById('completeDialog').showModal();
   }
@@ -1498,6 +1563,9 @@
 
   function effortScoreForChore(chore){
     if(!chore)return 2;
+    if(chore.effort==='quick')return 1;
+    if(chore.effort==='medium')return 2;
+    if(chore.effort==='bigger')return 3;
     const tags=normalizeTags(chore.tags).map(tagKey);
     const name=String(chore.name||'').toLowerCase();
     if(tags.some(t=>['quick','easy','small win','small-win','5 min','5-minute'].includes(t)))return 1;
@@ -1647,31 +1715,70 @@
       moveInstance(x.instance.id,date,x.instance.assignedTo||'either',Boolean(x.instance.pinned),true);
       x.instance.recoveryMoved=true;
     });
-    capacityDraft.filter(x=>x.action==='keep').forEach(x=>{x.instance.recoveryFocusDate=t;});
+    capacityDraft.filter(x=>x.action==='keep').forEach(x=>{
+      if(planDateOf(x.instance)!==t)moveInstance(x.instance.id,t,x.instance.assignedTo||'either',Boolean(x.instance.pinned),true);
+      x.instance.recoveryFocusDate=t;
+    });
     saveState('Today reset to your capacity');
     document.getElementById('capacityDialog').close();
     renderAll();
     toast('Recovery plan applied — today is allowed to be lighter');
   }
 
+  function energyCandidates(){
+    const t=toISO(today());
+    const horizon=toISO(addDays(today(),30));
+    const candidates=[];
+
+    state.instances
+      .filter(i=>!isTerminalInstance(i)&&i.choreId&&planDateOf(i)>t&&planDateOf(i)<=horizon)
+      .forEach(i=>{
+        const chore=choreById(i.choreId);if(!chore)return;
+        candidates.push({kind:'planned',chore,instance:i,date:planDateOf(i),due:i.originalDue||planDateOf(i),assignedTo:i.assignedTo||normalizeAssignee(chore.assignee)});
+      });
+
+    const forecasts=plannerForecastMap(toISO(addDays(today(),1)),horizon);
+    forecasts.forEach(items=>items.forEach(item=>{
+      const chore=choreById(item.choreId);if(!chore)return;
+      candidates.push({kind:'forecast',chore,date:item.dueDate,due:item.dueDate,assignedTo:item.assignedTo||normalizeAssignee(chore.assignee)});
+    }));
+
+    // Extra Energy should offer one next opportunity per routine, not several
+    // copies of the same recurring chore from later in the month.
+    const nextByChore=new Map();
+    candidates.sort((a,b)=>a.date.localeCompare(b.date)).forEach(x=>{
+      if(!nextByChore.has(x.chore.id))nextByChore.set(x.chore.id,x);
+    });
+    return [...nextByChore.values()].map(x=>({...x,days:daysBetween(t,x.date)}));
+  }
+
   function renderEnergySuggestions(){
     const wrap=document.getElementById('energySuggestions');wrap.innerHTML='';
     const t=toISO(today());
-    const openIds=new Set(state.instances.filter(i=>!i.completed&&!i.skipped&&!i.cancelled).map(i=>i.choreId));
-    let pool=state.chores.filter(c=>c.active!==false&&!openIds.has(c.id)).map(c=>({chore:c,due:nextDue(c),days:daysBetween(t,nextDue(c))}));
-    if(energyMode==='deep') pool=pool.filter(x=>x.chore.category==='Deep Clean').sort((a,b)=>a.days-b.days);
-    else if(energyMode==='quick') pool=pool.filter(x=>isSmallWinChore(x.chore)).sort((a,b)=>Math.abs(a.days)-Math.abs(b.days));
-    else if(energyMode==='future') pool=pool.filter(x=>x.days>=0).sort((a,b)=>a.days-b.days);
-    else pool=pool.sort((a,b)=>a.days-b.days);
+    let pool=energyCandidates();
+    if(energyMode==='deep') pool=pool.filter(x=>x.chore.category==='Deep Clean').sort((a,b)=>a.date.localeCompare(b.date));
+    else if(energyMode==='quick') pool=pool.filter(x=>isSmallWinChore(x.chore)).sort((a,b)=>a.date.localeCompare(b.date));
+    else if(energyMode==='future') pool=pool.sort((a,b)=>{
+      const ai=a.chore.importance==='essential'?0:a.chore.importance==='regular'?1:2;
+      const bi=b.chore.importance==='essential'?0:b.chore.importance==='regular'?1:2;
+      return ai-bi||a.date.localeCompare(b.date);
+    });
+    else pool=pool.sort((a,b)=>a.date.localeCompare(b.date));
+
     pool.slice(0,3).forEach(x=>{
       const card=document.createElement('div');card.className='task-card';
-      card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${x.days<=0?`${routineDateWord(x.chore)} now`:`${routineDateWord(x.chore)} ${relativeDate(x.due).toLowerCase()}`}</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Add today</button>`;
+      const source=x.kind==='planned'?'Planned':'Forecast';
+      card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${source} ${relativeDate(x.date).toLowerCase()}</span><span>•</span><span>${effortLabel(effortScoreForChore(x.chore))} effort</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Move to today</button>`;
       card.querySelector('button').addEventListener('click',()=>{
-        const inst={id:uid('inst'),choreId:x.chore.id,name:x.chore.name,category:x.chore.category,importance:x.chore.importance,originalDue:x.due,scheduledDate:t,plannedDate:t,assignedTo:chooseAssignee(x.chore,startOfWeek(today())),completed:false,oneOff:false,optionalPullForward:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()};
-        state.instances.push(inst);
-        rebaseFuturePlansAfterAssumptionChange(x.chore,inst,x.due,t,'plan');
-        saveState('Added to today — still optional');document.getElementById('energyDialog').close();renderAll();
-      });wrap.appendChild(card);
+        if(x.kind==='planned'&&x.instance){
+          moveInstance(x.instance.id,t,x.instance.assignedTo||x.assignedTo||'either',Boolean(x.instance.pinned));
+        }else{
+          scheduleForecast(x.chore.id,x.due,t,x.assignedTo||chooseAssignee(x.chore,startOfWeek(today())),false);
+        }
+        document.getElementById('energyDialog').close();
+        toast('Moved into today — still optional');
+      });
+      wrap.appendChild(card);
     });
     if(!wrap.children.length) wrap.innerHTML='<div class="empty-state"><h3>Nothing useful to pull forward.</h3><p>That is a perfectly good reason to stop.</p></div>';
   }
@@ -1759,6 +1866,7 @@
   function switchView(name){
     document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));
     document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
+    document.getElementById('mobileMoreBtn')?.classList.toggle('active',name==='history'||name==='settings');
     if(name==='planner'&&plannerViewMode!=='month') plannerWeekStart=startOfWeek(plannerWeekStart);
     window.scrollTo({top:0,behavior:'smooth'});renderAll();
   }
@@ -1798,8 +1906,10 @@
     document.getElementById('weekLabelBtn').addEventListener('click',()=>{plannerWeekStart=plannerViewMode==='month'?new Date(today().getFullYear(),today().getMonth(),1):startOfWeek(today());renderPlanner();});
     document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerPeriod().start),toISO(today()));document.getElementById('oneOffAssignee').value='either';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
     document.getElementById('saveOneOffBtn').addEventListener('click',e=>{e.preventDefault();addOneOff();});
-    document.getElementById('capacityBtn').addEventListener('click',openCapacityMode);
     document.getElementById('recoveryNudgeBtn').addEventListener('click',openCapacityMode);
+    document.getElementById('mobileMoreBtn')?.addEventListener('click',()=>document.getElementById('mobileMoreDialog').showModal());
+    document.getElementById('closeMobileMoreBtn')?.addEventListener('click',()=>document.getElementById('mobileMoreDialog').close());
+    document.querySelectorAll('[data-more-view]').forEach(b=>b.addEventListener('click',()=>{document.getElementById('mobileMoreDialog').close();switchView(b.dataset.moreView);}));
     document.querySelectorAll('[data-capacity]').forEach(b=>b.addEventListener('click',()=>{capacityMode=b.dataset.capacity;document.querySelectorAll('[data-capacity]').forEach(x=>x.classList.toggle('active',x===b));renderCapacityPlan();}));
     document.getElementById('applyCapacityPlanBtn').addEventListener('click',e=>{e.preventDefault();applyCapacityPlan();});
     document.getElementById('energyBtn').addEventListener('click',()=>{energyMode='soon';document.querySelectorAll('[data-energy]').forEach(b=>b.classList.toggle('active',b.dataset.energy==='soon'));renderEnergySuggestions();document.getElementById('energyDialog').showModal();});
@@ -1808,6 +1918,7 @@
     document.getElementById('exportBtn').addEventListener('click',exportData);document.getElementById('importInput').addEventListener('change',e=>{if(e.target.files?.[0])importData(e.target.files[0]);e.target.value='';});
     document.getElementById('setDefaultBtn').addEventListener('click',setCurrentAsDefault);
     document.getElementById('resetDemoBtn').addEventListener('click',resetToDefaults);
+    document.addEventListener('keydown',e=>{if(e.key==='Escape')closePlannerQuickMenu();});
   }
 
   bind(); renderAll();

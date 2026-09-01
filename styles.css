@@ -432,9 +432,6 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .plan-history-note { font-size: 9px; color: var(--muted); margin-top: 5px; }
 
 /* v1.15 — real-life / capacity mode */
-.capacity-panel { background: linear-gradient(145deg, #f8f2ee, #efe4df); }
-.capacity-panel h3 { margin-bottom: 7px; }
-.capacity-panel p:not(.section-kicker) { color: var(--muted); font-size: 13px; line-height: 1.5; }
 .recovery-nudge { border: 1px solid #dfd1c7; background: #faf5f1; border-radius: 14px; padding: 12px 13px; margin-bottom: 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .recovery-nudge > div { display: grid; gap: 3px; min-width: 0; }
 .recovery-nudge strong { font-size: 12px; }
@@ -605,4 +602,111 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .completion-date-tools input[type="date"] { width: 100%; max-width: 100%; }
 @media (max-width: 640px) {
   .completion-date-toggle { min-height: 38px; }
+}
+
+/* v1.18 — planner quick actions + aligned recovery plans */
+.planner-quick-menu {
+  position: fixed;
+  z-index: 1200;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255,253,249,.985);
+  box-shadow: 0 16px 42px rgba(54,45,37,.18);
+  backdrop-filter: blur(14px);
+}
+.planner-quick-title {
+  padding: 7px 9px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 2px;
+}
+.planner-quick-menu button {
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  padding: 10px 9px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.planner-quick-menu button:hover { background: var(--surface-2); }
+.planner-quick-menu .planner-quick-cancel { color: var(--muted); }
+
+@media (max-width: 640px) {
+  .planner-quick-menu.mobile-sheet {
+    left: 10px !important;
+    right: 10px;
+    top: auto !important;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    width: auto !important;
+    border-radius: 18px;
+    padding: 10px;
+  }
+  .planner-quick-menu.mobile-sheet button { min-height: 46px; font-size: 14px; }
+  .planner-quick-title { font-size: 13px; }
+}
+
+
+/* v1.19 — cleanup pass */
+.advanced-schedule {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #faf7f2;
+  padding: 0 13px;
+}
+.advanced-schedule summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+.advanced-schedule summary::-webkit-details-marker { display: none; }
+.advanced-schedule summary::after { content: '＋'; float: right; color: var(--muted); }
+.advanced-schedule[open] summary::after { content: '−'; }
+.advanced-schedule > .field-help { margin: -3px 0 12px; }
+.advanced-schedule .form-subgrid { padding-bottom: 13px; }
+
+.mobile-more-dialog { width: min(420px, calc(100vw - 28px)); }
+.mobile-more-wrap { padding: 22px; }
+.mobile-more-actions { display: grid; gap: 9px; }
+.mobile-more-action {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffefa;
+  padding: 13px;
+  display: grid;
+  grid-template-columns: 30px minmax(0,1fr);
+  gap: 11px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+.mobile-more-action:hover { border-color: #cabdb0; background: #faf7f2; }
+.mobile-more-action > span { font-size: 20px; text-align: center; }
+.mobile-more-action div { display: grid; gap: 3px; }
+.mobile-more-action strong { font-size: 13px; }
+.mobile-more-action small { color: var(--muted); font-size: 10px; line-height: 1.35; }
+
+@media (max-width: 640px) {
+  .mobile-more-dialog {
+    position: fixed;
+    inset: auto 10px calc(88px + env(safe-area-inset-bottom)) 10px;
+    width: auto;
+    margin: 0;
+    border-radius: 18px;
+  }
+  .mobile-more-wrap { padding: 16px; }
+  .mobile-more-action { min-height: 66px; }
+  .advanced-schedule .form-subgrid { grid-template-columns: 1fr; }
 }
