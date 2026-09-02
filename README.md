@@ -2,6 +2,16 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.23
+
+- Completed Planner cards now use the color of the **person who actually completed the chore**, not the person it had been assigned to.
+- Added **Edit completion** to right-click / press-and-hold actions for completed Planner cards. You can correct both **who did it** and **the completion date** without changing the chore setup.
+- Correcting the date moves the completed card to the real day and re-anchors future completion-based interval targets when the corrected completion is the latest one. Fixed/calendar routines keep their calendar rhythm.
+- Correcting who did it also updates History and lets future automatic Either assignments alternate from the real person who completed it.
+- **Mark done on…** now defaults to the card's planned date when that date is in the past, reducing accidental “done today” entries when logging a forgotten completion from the Planner.
+- Historical completion seeding now checks the stored local completion date first, avoiding duplicate/incorrect day placement around UTC date boundaries.
+- Bumped the PWA cache to `household-v1-23`.
+
 ## v1.22
 
 - Added **Remove from plan** to Planner quick actions for recurring occurrences that were explicitly planned/moved. Future targets return to an outlined forecast; if the target has already arrived, the extra plan is removed but the chore remains honestly due at its routine target. Later completion-based forecasts are re-anchored to the routine target rather than the abandoned plan.

@@ -412,8 +412,9 @@
 
   <dialog id="completeDialog" class="modal small-modal">
     <form method="dialog" id="completeForm">
-      <div class="modal-head"><div><p class="section-kicker">MARK COMPLETE</p><h2 id="completeTaskName">Chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
+      <div class="modal-head"><div><p class="section-kicker" id="completeKicker">MARK COMPLETE</p><h2 id="completeTaskName">Chore</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
       <input type="hidden" id="completeInstanceId" />
+      <p class="modal-copy hidden" id="completeEditHelp">Correct who completed this chore or the day it was actually done. The planner will update to match the correction.</p>
       <label>Who did it?<select id="completedBy"></select></label>
       <div class="completion-date-tools">
         <button type="button" class="text-btn completion-date-toggle" id="toggleCompletionDateBtn">Choose a different date</button>

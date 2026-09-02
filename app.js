@@ -531,6 +531,64 @@
     const d=parseISO(dateIso);d.setHours(12,0,0,0);return d.toISOString();
   }
 
+  function completionDateOf(i){
+    return i?.completedDate||(i?.completedAt?String(i.completedAt).slice(0,10):null);
+  }
+
+  function latestCompletedInstanceDate(choreId){
+    const dates=state.instances.filter(i=>i.choreId===choreId&&i.completed&&!i.cancelled).map(completionDateOf).filter(Boolean);
+    if(!dates.length)return null;dates.sort();return dates[dates.length-1];
+  }
+
+  function editCompletedInstance(id,completedBy,completedDate){
+    const i=instanceById(id);if(!i||!i.completed)return false;
+    const actualDate=completedDate||completionDateOf(i)||toISO(today());
+    if(actualDate>toISO(today())){toast('A completion date cannot be in the future');return false;}
+    const oldDate=completionDateOf(i)||actualDate;
+    const oldBy=i.completedBy||null;
+    const chore=choreById(i.choreId);
+    const oldLatest=chore?latestCompletedInstanceDate(chore.id):null;
+    const historyRow=state.history.find(h=>h.instanceId===i.id&&h.action!=='skipped');
+
+    i.completedBy=completedBy;
+    if(actualDate!==oldDate){
+      i.completedDate=actualDate;
+      i.completedAt=completionTimestampForDate(actualDate);
+      i.completedTimeKnown=actualDate===toISO(today());
+    }
+    if(historyRow){
+      historyRow.completedBy=completedBy;
+      historyRow.completedDate=actualDate;
+      if(actualDate!==oldDate){
+        historyRow.completedAt=i.completedAt;
+        historyRow.completedTimeKnown=i.completedTimeKnown;
+      }
+    }
+
+    if(chore){
+      const newLatest=latestCompletedInstanceDate(chore.id);
+      const behavior=effectiveScheduleBehavior(chore);
+      if(oldLatest&&newLatest&&oldLatest!==newLatest&&(chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'){
+        const delta=daysBetween(oldLatest,newLatest);
+        state.instances.filter(x=>x.choreId===chore.id&&!isTerminalInstance(x)).forEach(x=>{
+          if(x.originalDue)x.originalDue=toISO(addDays(parseISO(x.originalDue),delta));
+          if(!x.pinned&&planDateOf(x))setPlanDate(x,toISO(addDays(parseISO(planDateOf(x)),delta)));
+        });
+        chore.anchorDate=newLatest;
+        chore.nextDueOverride=null;
+      }
+      if(newLatest)chore.lastCompleted=newLatest;
+      // Assignment colors and automatic future assignment should reflect the
+      // person who actually did the latest chore, not an old planned owner.
+      if(oldBy!==completedBy||oldLatest!==newLatest){
+        state.instances.filter(x=>x.choreId===chore.id&&!isTerminalInstance(x)&&!x.manualPlan&&!x.pinned).forEach(x=>{
+          x.assignedTo=chooseAssignee(chore,startOfWeek(parseISO(planDateOf(x)||x.originalDue)));
+        });
+      }
+    }
+    saveState('Completion corrected');renderAll();return true;
+  }
+
   function completeInstance(id, completedBy, scheduleChoice=null, completedDate=null) {
     const i=instanceById(id); if(!i) return false;
     const actualDate=completedDate||toISO(today());
@@ -988,7 +1046,7 @@
 
   function manualHistoryItemsForDate(iso){
     return state.chores.filter(c=>c.active!==false&&c.lastCompleted===iso).filter(c=>{
-      return !state.instances.some(i=>i.choreId===c.id&&i.completed&&String(i.completedAt||'').slice(0,10)===iso);
+      return !state.instances.some(i=>i.choreId===c.id&&i.completed&&completionDateOf(i)===iso);
     }).map(c=>({
       id:`history-seed|${c.id}|${iso}`,historicalSeed:true,choreId:c.id,name:c.name,category:c.category,importance:c.importance,
       scheduledDate:iso,plannedDate:iso,completed:true,completedAt:`${iso}T12:00:00`,completedBy:null,assignedTo:'either',oneOff:false
@@ -1043,15 +1101,15 @@
       btn.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
       addPlannerLongPress(btn,()=>openForecastMove(item.choreId,item.dueDate));
     } else {
-      const owner=item.assignedTo||'either';
+      const owner=item.completed?(item.completedBy||'either'):(item.assignedTo||'either');
       btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.skipped?' skipped':''}${item.pinned?' pinned':''}`;
       btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':item.skipped?(item.skipSource==='covered-by-completion'?'rolled forward':'skipped'):esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
       btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.skipped?`${item.name} • ${item.skipSource==='covered-by-completion'?'covered by a later completion':'skipped this cycle'}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
       if(item.historicalSeed||item.skipped||item.completed){
         btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`);});
       }
-      btn.addEventListener('contextmenu',e=>{if(item.historicalSeed||item.skipped||item.completed)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
-      if(!item.historicalSeed&&!item.skipped&&!item.completed)addPlannerLongPress(btn,()=>openPlannerQuickMenu(item.id));
+      btn.addEventListener('contextmenu',e=>{if(item.historicalSeed||item.skipped)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
+      if(!item.historicalSeed&&!item.skipped)addPlannerLongPress(btn,()=>openPlannerQuickMenu(item.id));
     }
     return btn;
   }
@@ -1182,8 +1240,10 @@
       actions.push(['move','↪ Move / re-plan']);
       if(canUnplanInstance(i))actions.push(['unplan','↩ Remove from plan']);
       actions.push(['skip','⏭ Skip this cycle']);
+    }else if(i.completed&&!i.historicalSeed){
+      actions.push(['edit-completion','✎ Edit completion']);
     }
-    if(i.choreId)actions.push(['edit','✎ Edit chore']);
+    if(i.choreId)actions.push(['edit','⚙ Edit chore setup']);
     menu.innerHTML=`<div class="planner-quick-title">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div>${actions.map(([key,label])=>`<button type="button" data-action="${key}" role="menuitem">${label}</button>`).join('')}<button type="button" class="planner-quick-cancel" data-action="close">Cancel</button>`;
     document.body.appendChild(menu);positionPlannerQuickMenu(menu,anchor,point);
     menu.addEventListener('click',e=>{
@@ -1192,6 +1252,7 @@
       if(action==='done')openComplete(id,false);
       else if(action==='done-date')openComplete(id,true);
       else if(action==='move')openMove(id);
+      else if(action==='edit-completion')openEditCompletion(id);
       else if(action==='unplan')unplanInstance(id);
       else if(action==='skip'){
         const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';
@@ -1206,7 +1267,7 @@
   }
 
   function plannerCard(i){
-    const owner=i.assignedTo||'either';
+    const owner=i.completed?(i.completedBy||'either'):(i.assignedTo||'either');
     const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.skipped?' skipped':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.skipped&&!i.historicalSeed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
     const plan=planDateOf(i);
@@ -1622,11 +1683,34 @@
 
   function openComplete(id,chooseDate=false){
     const i=instanceById(id);if(!i)return;
+    const form=document.getElementById('completeForm');form.dataset.mode='complete';
+    document.getElementById('completeKicker').textContent='MARK COMPLETE';
+    document.getElementById('completeEditHelp').classList.add('hidden');
+    document.getElementById('toggleCompletionDateBtn').classList.remove('hidden');
     document.getElementById('completeInstanceId').value=id;document.getElementById('completeTaskName').textContent=i.name;
     const select=document.getElementById('completedBy'); select.value=['person1','person2'].includes(i.assignedTo)?i.assignedTo:'person1';
-    const completedDate=document.getElementById('completedDate');completedDate.value=toISO(today());completedDate.max=toISO(today());
+    const completedDate=document.getElementById('completedDate');
+    const planned=planDateOf(i);
+    const suggested=chooseDate&&planned&&planned<=toISO(today())?planned:toISO(today());
+    completedDate.value=suggested;completedDate.max=toISO(today());
     setCompletionDatePickerVisible(Boolean(chooseDate));
+    if(chooseDate)completedDate.value=suggested;
     const chore=choreById(i.choreId);document.getElementById('completionScheduleChoice').classList.toggle('hidden',!chore||chore.scheduleBehavior!=='ask');
+    document.getElementById('completeDialog').showModal();
+  }
+
+  function openEditCompletion(id){
+    const i=instanceById(id);if(!i||!i.completed)return;
+    const form=document.getElementById('completeForm');form.dataset.mode='edit';
+    document.getElementById('completeKicker').textContent='EDIT COMPLETION';
+    document.getElementById('completeEditHelp').classList.remove('hidden');
+    document.getElementById('toggleCompletionDateBtn').classList.add('hidden');
+    document.getElementById('completeInstanceId').value=id;document.getElementById('completeTaskName').textContent=i.name;
+    const select=document.getElementById('completedBy');select.value=['person1','person2'].includes(i.completedBy)?i.completedBy:'person1';
+    const completedDate=document.getElementById('completedDate');completedDate.value=completionDateOf(i)||toISO(today());completedDate.max=toISO(today());
+    document.getElementById('completedDateLabel').classList.remove('hidden');
+    document.getElementById('completionScheduleChoice').classList.add('hidden');
+    document.getElementById('confirmCompleteBtn').textContent='Save correction';
     document.getElementById('completeDialog').showModal();
   }
 
@@ -2002,7 +2086,7 @@
     document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
     document.getElementById('toggleCompletionDateBtn').addEventListener('click',()=>{const label=document.getElementById('completedDateLabel');setCompletionDatePickerVisible(label.classList.contains('hidden'));});
-    document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;const date=document.getElementById('completedDate').value||toISO(today());if(completeInstance(id,document.getElementById('completedBy').value,choice,date))document.getElementById('completeDialog').close();});
+    document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const form=document.getElementById('completeForm');const date=document.getElementById('completedDate').value||toISO(today());const by=document.getElementById('completedBy').value;if(form.dataset.mode==='edit'){if(editCompletedInstance(id,by,date))document.getElementById('completeDialog').close();return;}const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;if(completeInstance(id,by,choice,date))document.getElementById('completeDialog').close();});
     document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const assignee=document.getElementById('moveAssignee').value;const pinned=document.getElementById('pinPlanDate').checked;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,assignee,pinned);else moveInstance(target,date,assignee,pinned);document.getElementById('moveDialog').close();});
     document.getElementById('skipOccurrenceBtn').addEventListener('click',()=>{const id=document.getElementById('moveInstanceId').value;const i=instanceById(id);if(!i)return;const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';if(confirm(`Skip “${i.name}” for this ${word} cycle? This will not count as completed.`)){document.getElementById('moveDialog').close();skipInstance(id,'manual');}});
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.addEventListener('click',()=>{plannerViewMode=b.dataset.plannerView;plannerWeekStart=plannerViewMode==='month'?new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth(),1):startOfWeek(plannerWeekStart);renderPlanner();}));
