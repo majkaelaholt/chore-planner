@@ -2,6 +2,12 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.25
+- Fixed cross-device completion-day drift around UTC date boundaries. Older records that only stored `completedAt` now recover their calendar day using the device's local timezone instead of slicing the UTC timestamp.
+- State migration backfills `completedDate` on legacy completed instances and matching History rows so a cloud pull becomes stable after normalization.
+- Today, Planner, completion editing, and historical calendar placement now all use the same local completion-date helper.
+- Bumped stored state schema to `2.3` and PWA cache to `household-v1-25`.
+
 
 ## v1.24
 - Replaced the external `supabase-js` CDN dependency with direct Supabase REST calls for cloud Push/Pull, reducing iPhone/PWA failure points.

@@ -19,7 +19,7 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 2.2,
+    version: 2.3,
     settings: {
       people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
@@ -97,14 +97,16 @@
   function normalizeState(s) {
     const base = starter();
     const chores = Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores;
+    const instances = normalizeInstancesForVersion(s.instances,s.version,chores);
+    const history = normalizeHistoryRows(s.history,instances);
     return {
       ...base,
       ...s,
       settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 2.2,
+      version: 2.3,
       chores,
-      instances: normalizeInstancesForVersion(s.instances,s.version,chores),
-      history: Array.isArray(s.history) ? s.history : [],
+      instances,
+      history,
       customDefault: normalizeDefaultSnapshot(s.customDefault,s.version)
     };
   }
@@ -116,6 +118,10 @@
       skipped: Boolean(i.skipped),
       skippedAt: i.skippedAt||null,
       skipSource: i.skipSource||null,
+      // v2.3: older completions sometimes had only a UTC timestamp. Preserve
+      // the explicit local day when present; otherwise recover the calendar day
+      // in the device's local timezone instead of slicing the UTC date.
+      completedDate: i.completedDate||(i.completedAt?localDateFromTimestamp(i.completedAt):null),
       manualPlan: Boolean(i.manualPlan||i.snoozed||i.plannedFromForecast),
       // v2 keeps the intended plan date intact when a chore becomes late.
       // Older versions sometimes carried a missed chore forward by overwriting
@@ -149,6 +155,19 @@
       }));
     }
     return list;
+  }
+
+  function normalizeHistoryRows(history,instances=[]){
+    if(!Array.isArray(history))return [];
+    const instanceByHistoryId=new Map(instances.map(i=>[i.id,i]));
+    return history.map(h=>{
+      if(h.action==='skipped'||!h.completedAt)return h;
+      const linked=instanceByHistoryId.get(h.instanceId);
+      return {
+        ...h,
+        completedDate:h.completedDate||linked?.completedDate||localDateFromTimestamp(h.completedAt)
+      };
+    });
   }
 
   function repairSkippedFirstCalendarOccurrences(instances,chores){
@@ -235,6 +254,11 @@
   function today() { const d = new Date(); d.setHours(0,0,0,0); return d; }
   function parseISO(s) { const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); }
   function toISO(d) { const x = new Date(d); x.setMinutes(x.getMinutes()-x.getTimezoneOffset()); return x.toISOString().slice(0,10); }
+  function localDateFromTimestamp(timestamp) {
+    if(!timestamp)return null;
+    const d=new Date(timestamp);
+    return Number.isNaN(d.getTime())?String(timestamp).slice(0,10):toISO(d);
+  }
   function addDays(d,n) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
   function daysBetween(a,b) { return Math.round((parseDateish(b)-parseDateish(a))/dayMs); }
   function parseDateish(x) { if (x instanceof Date) { const d=new Date(x); d.setHours(0,0,0,0); return d; } return parseISO(x); }
@@ -412,7 +436,7 @@
   }
 
   function calendarDateForInstance(i){
-    if(i?.completed && (i.completedDate||i.completedAt)) return i.completedDate||String(i.completedAt).slice(0,10);
+    if(i?.completed && (i.completedDate||i.completedAt)) return completionDateOf(i);
     return planDateOf(i);
   }
 
@@ -532,7 +556,7 @@
   }
 
   function completionDateOf(i){
-    return i?.completedDate||(i?.completedAt?String(i.completedAt).slice(0,10):null);
+    return i?.completedDate||(i?.completedAt?localDateFromTimestamp(i.completedAt):null);
   }
 
   function latestCompletedInstanceDate(choreId){
@@ -771,7 +795,7 @@
     // An unfinished plan stays attached to the day Mak intended to do it, but
     // Today keeps surfacing it until it is completed or deliberately moved.
     const open=todayOpenInstances();
-    const completed=state.instances.filter(i=>i.completed&&!i.cancelled&&(i.completedDate||String(i.completedAt||'').slice(0,10))===t);
+    const completed=state.instances.filter(i=>i.completed&&!i.cancelled&&completionDateOf(i)===t);
     const missed=open.filter(i=>planDateOf(i)<t);
     const nudge=document.getElementById('recoveryNudge');
     if(nudge){
@@ -1272,7 +1296,7 @@
     const overdue=statusForInstance(i)==='overdue';
     const plan=planDateOf(i);
     const chore=choreById(i.choreId);
-    const completedDate=i.completedDate||(i.completedAt?String(i.completedAt).slice(0,10):null);
+    const completedDate=completionDateOf(i);
     const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
       ?`<div class="original-due">${overdue?'Past target • ':''}${routineDateWord(chore,true)} ${formatShort(i.originalDue)}</div>`
       :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
