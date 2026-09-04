@@ -2,6 +2,14 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+
+## v1.24
+- Replaced the external `supabase-js` CDN dependency with direct Supabase REST calls for cloud Push/Pull, reducing iPhone/PWA failure points.
+- Cloud requests now use the project publishable key through the `apikey` header and provide clearer timeout/network error messages.
+- Service worker now handles only same-origin app files; Supabase/API/CDN requests are no longer intercepted or accidentally replaced by the offline HTML fallback.
+- Service worker uses `skipWaiting()` / `clients.claim()` so an updated PWA takes control more reliably after deployment.
+- Bumped the PWA cache to `household-v1-24`.
+
 ## v1.23
 
 - Completed Planner cards now use the color of the **person who actually completed the chore**, not the person it had been assigned to.

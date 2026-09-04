@@ -1981,35 +1981,68 @@
     saveState('Settings saved');renderAll();
   }
 
-  async function getSupabase(){
-    const {supabaseUrl, supabaseKey}=state.settings;if(!supabaseUrl||!supabaseKey){toast('Add your Supabase URL and key first');return null;}
-    if(!window.supabase){toast('Supabase library did not load');return null;}
-    return window.supabase.createClient(supabaseUrl,supabaseKey);
-  }
-  async function pushCloud(){
-    saveSettings();const sb=await getSupabase();if(!sb)return;
+  function getCloudConfig(){
+    const supabaseUrl=(state.settings.supabaseUrl||'').trim().replace(/\/$/,'');
+    const supabaseKey=(state.settings.supabaseKey||'').trim();
     const syncId=(state.settings.syncId||'mak-household').trim();
+    if(!supabaseUrl||!supabaseKey){toast('Add your Supabase URL and key first');return null;}
+    return {supabaseUrl,supabaseKey,syncId};
+  }
+
+  async function cloudFetch(path, options={}){
+    const cfg=getCloudConfig();if(!cfg)return null;
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),15000);
+    try{
+      const response=await fetch(`${cfg.supabaseUrl}${path}`,{
+        ...options,
+        signal:controller.signal,
+        headers:{
+          apikey:cfg.supabaseKey,
+          Accept:'application/json',
+          ...(options.headers||{})
+        }
+      });
+      let body=null;
+      const text=await response.text();
+      if(text){try{body=JSON.parse(text);}catch{body=text;}}
+      if(!response.ok){
+        const message=body?.message||body?.error_description||body?.hint||body?.details||`HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      return {body,cfg};
+    }catch(error){
+      const message=error?.name==='AbortError'?'Request timed out':(error?.message||'Network request failed');
+      throw new Error(message);
+    }finally{clearTimeout(timeout);}
+  }
+
+  async function pushCloud(){
+    saveSettings();
+    const cfg=getCloudConfig();if(!cfg)return;
     const payload=JSON.parse(JSON.stringify(state)); payload.settings.supabaseKey='';
-    const {data,error}=await sb.from('household_state')
-      .upsert({id:syncId,state:payload,updated_at:new Date().toISOString()},{onConflict:'id'})
-      .select('id,updated_at')
-      .maybeSingle();
-    if(error){console.error(error);toast(`Cloud backup failed: ${error.message}`);return;}
-    if(!data?.id){toast(`Cloud backup could not be verified for “${syncId}”`);return;}
-    toast('Cloud backup saved');
+    try{
+      const result=await cloudFetch('/rest/v1/household_state?on_conflict=id&select=id,updated_at',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},
+        body:JSON.stringify({id:cfg.syncId,state:payload,updated_at:new Date().toISOString()})
+      });
+      const row=Array.isArray(result?.body)?result.body[0]:result?.body;
+      if(!row?.id){toast(`Cloud backup could not be verified for “${cfg.syncId}”`);return;}
+      toast('Cloud backup saved');
+    }catch(error){console.error(error);toast(`Cloud backup failed: ${error.message}`);}
   }
   async function pullCloud(){
-    saveSettings();const sb=await getSupabase();if(!sb)return;
-    const syncId=(state.settings.syncId||'mak-household').trim();
-    const {data,error}=await sb.from('household_state')
-      .select('state,updated_at')
-      .eq('id',syncId)
-      .limit(1);
-    if(error){console.error(error);toast(`Cloud restore failed: ${error.message}`);return;}
-    const row=Array.isArray(data)?data[0]:data;
-    if(!row?.state){toast(`No cloud backup found for “${syncId}”`);return;}
-    const creds={supabaseUrl:state.settings.supabaseUrl,supabaseKey:state.settings.supabaseKey,syncId};
-    state=normalizeState(row.state);Object.assign(state.settings,creds);saveState('Cloud backup restored');renderAll();
+    saveSettings();
+    const cfg=getCloudConfig();if(!cfg)return;
+    try{
+      const encoded=encodeURIComponent(cfg.syncId);
+      const result=await cloudFetch(`/rest/v1/household_state?id=eq.${encoded}&select=state,updated_at&limit=1`);
+      const row=Array.isArray(result?.body)?result.body[0]:result?.body;
+      if(!row?.state){toast(`No cloud backup found for “${cfg.syncId}”`);return;}
+      const creds={supabaseUrl:cfg.supabaseUrl,supabaseKey:cfg.supabaseKey,syncId:cfg.syncId};
+      state=normalizeState(row.state);Object.assign(state.settings,creds);saveState('Cloud backup restored');renderAll();
+    }catch(error){console.error(error);toast(`Cloud restore failed: ${error.message}`);}
   }
 
   function defaultSnapshotFromCurrent(){
