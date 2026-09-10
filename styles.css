@@ -117,8 +117,8 @@ h2 { letter-spacing: -.025em; }
 .planner-card.done { opacity: .48; }
 .planner-card-title { font-size: 12px; font-weight: 780; line-height: 1.25; }
 .planner-card-meta { display: flex; justify-content: space-between; gap: 7px; margin-top: 7px; align-items: center; }
-.assignee-dot { display: inline-flex; gap: 5px; align-items: center; color: var(--muted); font-size: 9px; font-weight: 700; }
-.assignee-dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warm); }
+.effort-dot { display: inline-flex; gap: 5px; align-items: center; color: var(--muted); font-size: 9px; font-weight: 700; }
+.effort-dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warm); }
 .original-due { font-size: 9px; color: var(--danger); margin-top: 5px; }
 .planner-footer { display: flex; gap: 10px; margin-top: 15px; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
@@ -127,7 +127,7 @@ h2 { letter-spacing: -.025em; }
 .chip.active { background: var(--ink); color: white; border-color: var(--ink); }
 .search-wrap { display: flex; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 0 10px; min-width: 250px; }
 .search-wrap input { border: 0; outline: 0; background: transparent; padding: 10px 0; width: 100%; }
-.chore-filter-row { display: grid; grid-template-columns: repeat(5,minmax(130px,1fr)) auto; gap: 10px; align-items: end; margin: -5px 0 10px; }
+.chore-filter-row { display: grid; grid-template-columns: repeat(4,minmax(130px,1fr)) auto; gap: 10px; align-items: end; margin: -5px 0 10px; }
 .chore-filter-row label { gap: 4px; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .chore-filter-row select { padding: 8px 9px; font-size: 11px; background: rgba(255,253,249,.78); }
 .clear-filter-btn { align-self: end; white-space: nowrap; min-height: 36px; }
@@ -405,30 +405,29 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .forecast-label { text-transform: uppercase; letter-spacing: .05em; }
 .forecast-due { margin-top: 5px; }
 
-/* v1.13 assignee shading: ownership is the planner's primary color cue. */
-.legend-person1 { background: #f1dddd; border: 1px solid #d8bcbc; }
-.legend-person2 { background: #dfe8f0; border: 1px solid #bccbd8; }
-.legend-either { background: #eee8da; border: 1px solid #d7ccb4; }
+/* v1.26 effort shading: calendar color now communicates how much energy a chore takes. */
+.legend-quick { background: #e7efe2; border: 1px solid #bfd0b7; }
+.legend-medium { background: #efe7d7; border: 1px solid #d4c4a3; }
+.legend-bigger { background: #f1dfdc; border: 1px solid #d8b9b3; }
 
 /* Detailed Week cards */
-.planner-card.assignee-person1 { background: #f5e5e5; border-color: #dfc3c3; }
-.planner-card.assignee-person2 { background: #e7eef4; border-color: #c5d2dd; }
-.planner-card.assignee-either { background: #f4eee2; border-color: #ddd1ba; }
-.planner-card.forecast-card.assignee-person1 { background: rgba(241,221,221,.45); border-color: #cfaeae; }
-.planner-card.forecast-card.assignee-person2 { background: rgba(223,232,240,.48); border-color: #aebfcc; }
-.planner-card.forecast-card.assignee-either { background: rgba(238,232,218,.48); border-color: #bdb198; }
+.planner-card.effort-quick { background: #edf3e9; border-color: #c9d8c2; }
+.planner-card.effort-medium { background: #f4eddf; border-color: #decfad; }
+.planner-card.effort-bigger { background: #f5e6e3; border-color: #dfc1bb; }
+.planner-card.forecast-card.effort-quick { background: rgba(231,239,226,.42); border-color: #b8cbb0; }
+.planner-card.forecast-card.effort-medium { background: rgba(239,231,215,.44); border-color: #cbb991; }
+.planner-card.forecast-card.effort-bigger { background: rgba(241,223,220,.44); border-color: #cfaea8; }
 .planner-card.pinned { box-shadow: inset 0 0 0 1px rgba(79,63,49,.12); }
 .planner-card.historical-seed { opacity: .48; cursor: default; }
 
 /* Compact 2-week / Month cards */
-.calendar-task.planned.assignee-person1 { background: #f5e5e5; border-color: #dfc3c3; }
-.calendar-task.planned.assignee-person2 { background: #e7eef4; border-color: #c5d2dd; }
-.calendar-task.planned.assignee-either { background: #f4eee2; border-color: #ddd1ba; }
-.calendar-task.forecast.assignee-person1 { background: rgba(241,221,221,.40); border-color: #cfaeae; }
-.calendar-task.forecast.assignee-person2 { background: rgba(223,232,240,.42); border-color: #aebfcc; }
-.calendar-task.forecast.assignee-either { background: rgba(238,232,218,.42); border-color: #bdb198; }
+.calendar-task.planned.effort-quick { background: #edf3e9; border-color: #c9d8c2; }
+.calendar-task.planned.effort-medium { background: #f4eddf; border-color: #decfad; }
+.calendar-task.planned.effort-bigger { background: #f5e6e3; border-color: #dfc1bb; }
+.calendar-task.forecast.effort-quick { background: rgba(231,239,226,.38); border-color: #b8cbb0; }
+.calendar-task.forecast.effort-medium { background: rgba(239,231,215,.40); border-color: #cbb991; }
+.calendar-task.forecast.effort-bigger { background: rgba(241,223,220,.40); border-color: #cfaea8; }
 .calendar-task.pinned { box-shadow: inset 0 0 0 1px rgba(79,63,49,.10); }
-
 
 /* v1.13 planning details */
 .pin-plan-row { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 10px !important; padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.42); }
@@ -438,9 +437,9 @@ select:disabled { opacity: .62; cursor: not-allowed; }
 .chore-next-stack { display: grid; gap: 2px; min-width: 0; }
 .chore-next-stack strong { font-size: 11px; font-weight: 760; color: var(--ink); }
 .chore-next-stack span { font-size: 9px; color: var(--muted); }
-.planner-card.assignee-person1 .assignee-dot::before { background: #c9959f; }
-.planner-card.assignee-person2 .assignee-dot::before { background: #8eaabd; }
-.planner-card.assignee-either .assignee-dot::before { background: #b6a78f; }
+.planner-card.effort-quick .effort-dot::before { background: #8eaa82; }
+.planner-card.effort-medium .effort-dot::before { background: #b49a65; }
+.planner-card.effort-bigger .effort-dot::before { background: #bd8177; }
 .plan-history-note { font-size: 9px; color: var(--muted); margin-top: 5px; }
 
 /* v1.15 — real-life / capacity mode */

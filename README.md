@@ -2,6 +2,15 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.26
+- Removed chore ownership/assignment from the visible app. Chores are household tasks rather than Mak / Ty / Either responsibilities.
+- Removed person selection from recurring chores, one-off chores, replanning, batch editing, filters, Settings, and completion logging/editing. Existing legacy assignee fields remain harmlessly compatible with older backups but no longer affect behavior.
+- Planner colors now represent **Effort** instead of ownership: soft green = Quick, warm beige = Medium, dusty rose = Bigger. Auto effort uses its inferred effective level.
+- Week, 2-Week, and Month planner legends now explain effort colors; planned vs forecast styling still remains separate.
+- Today, Overview, and History no longer display who a chore belongs to or who completed it.
+- One-off chores now ask for Effort instead of an assignee so they participate correctly in calendar color and capacity logic.
+- Bumped stored state schema to `2.4` and PWA cache to `household-v1-26`.
+
 ## v1.25
 - Fixed cross-device completion-day drift around UTC date boundaries. Older records that only stored `completedAt` now recover their calendar day using the device's local timezone instead of slicing the UTC timestamp.
 - State migration backfills `completedDate` on legacy completed instances and matching History rows so a cloud pull becomes stable after normalization.
@@ -196,7 +205,6 @@ A desktop + iPhone-friendly PWA for recurring household chores. The main goal is
 - **Household Overview** visualizes maintenance freshness for Essential chores by default, with an optional all-chore view and category statuses.
 - **Planner** has Week / 2 Weeks / Month views that all show the same continuous schedule. Solid cards are explicit plans; outlined cards are forecasts. Due dates stay tied to the routine while planned dates can move independently, and completion-based plans reflow when reality changes.
 - **Grace windows by importance** keep low-stakes chores from becoming fake emergencies.
-- **Mak / Ty / Either assignments** with automatic splitting for “Either” chores. If one person did a chore last time, the app prefers the other person next time.
 - **Recurring + one-off chores** in the same weekly planner.
 - **Flexible recurrence**: every X days/weeks/months, a specific weekday, a specific day of the month, or patterns like the first Sunday of each month.
 - **Editable Start date + Next due date** for each recurring chore, including one-cycle next-date overrides.
@@ -238,7 +246,6 @@ Every recurring chore has:
 - an editable next due date
 - an importance level
 - a grace window based on importance
-- a default assignee
 - a schedule behavior
 - a **date meaning**: flexible target or truly fixed/calendar-dependent date
 
@@ -246,9 +253,9 @@ The planner shows recurring chores continuously without requiring a generation s
 
 ## Default chore library
 
-The built-in defaults are Mak + Ty's household chore list. All recurring chores default to **Either** so the weekly planner can distribute them between Mak and Ty.
+The built-in defaults are a household chore library. Chores are not assigned to a person; the planner tracks when they need attention and how much effort they take.
 
-In **Settings → Backup & reset**, **Set current setup as default** saves the current chore configuration as the new reset baseline. It saves chore names, categories, recurrence rules, schedule flexibility, effort, start/next dates, importance, assignments, tags, and notes; it intentionally does not save completion history or the current weekly plan. Resetting preserves app settings and Supabase credentials.
+In **Settings → Backup & reset**, **Set current setup as default** saves the current chore configuration as the new reset baseline. It saves chore names, categories, recurrence rules, schedule flexibility, effort, start/next dates, importance, tags, and notes; it intentionally does not save completion history or the current weekly plan. Resetting preserves app settings and Supabase credentials.
 
 The starter schedule does **not** fabricate completion history. It seeds first due dates across sensible upcoming days; once a chore is completed, its normal recurrence takes over.
 

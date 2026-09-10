@@ -9,7 +9,7 @@
   let plannerWeekStart = startOfWeek(new Date());
   let plannerViewMode = 'week';
   let activeCategory = 'All';
-  let choreFilters = { importance:'all', effort:'all', assignee:'all', tag:'all', status:'all' };
+  let choreFilters = { importance:'all', effort:'all', tag:'all', status:'all' };
   let choreSort = { key:'name', dir:'asc' };
   let selectedChoreIds = new Set();
   let energyMode = 'soon';
@@ -19,9 +19,8 @@
   let toastTimer;
 
   const starter = () => ({
-    version: 2.3,
+    version: 2.4,
     settings: {
-      people: ['Mak','Ty'],
       grace: { essential: 1, regular: 2, low: 4 },
       supabaseUrl: '', supabaseKey: '', syncId: 'mak-household'
     },
@@ -99,11 +98,15 @@
     const chores = Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores;
     const instances = normalizeInstancesForVersion(s.instances,s.version,chores);
     const history = normalizeHistoryRows(s.history,instances);
+    const settings={...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}};
+    // v2.4 retired person/ownership settings. Drop legacy names when old backups
+    // are normalized so future exports stay household-focused too.
+    delete settings.people;
     return {
       ...base,
       ...s,
-      settings: {...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}},
-      version: 2.3,
+      settings,
+      version: 2.4,
       chores,
       instances,
       history,
@@ -392,33 +395,17 @@
   }
   function choreById(id) { return state.chores.find(c=>c.id===id); }
   function instanceById(id) { return state.instances.find(i=>i.id===id); }
-  function currentPeople() { return state.settings.people; }
-  function personLabel(key) {
-    const [p1,p2]=currentPeople();
-    if (key==='person1') return p1;
-    if (key==='person2') return p2;
-    if (key==='mak') return p1;
-    if (key==='ty') return p2;
-    return 'Either';
+  function effectiveEffortKey(choreOrItem){
+    const score=effortScoreForChore(choreOrItem);
+    return score<=1?'quick':score>=3?'bigger':'medium';
   }
-  function normalizeAssignee(key) {
-    if (key==='mak') return 'person1'; if (key==='ty') return 'person2'; return key || 'either';
-  }
-  function assigneeClass(key){
-    const normalized=normalizeAssignee(key);
-    return normalized==='person1'?'assignee-person1':normalized==='person2'?'assignee-person2':'assignee-either';
-  }
+  function effortClass(choreOrItem){ return `effort-${effectiveEffortKey(choreOrItem)}`; }
 
   function completionHistoryFor(choreId) { return state.history.filter(h=>h.choreId===choreId&&h.completedAt&&h.action!=='skipped').sort((a,b)=>b.completedAt.localeCompare(a.completedAt)); }
-  function chooseAssignee(chore, weekStart) {
-    const explicit = normalizeAssignee(chore.assignee);
-    if (explicit !== 'either') return explicit;
-    const hist = completionHistoryFor(chore.id);
-    if (hist.length && ['person1','person2'].includes(hist[0].completedBy)) return hist[0].completedBy==='person1' ? 'person2' : 'person1';
-    const ws=toISO(weekStart), we=toISO(endOfWeek(weekStart));
-    const counts={person1:0,person2:0};
-    state.instances.filter(i=>planDateOf(i)>=ws&&planDateOf(i)<=we&&!i.completed).forEach(i=>{ if(counts[i.assignedTo]!==undefined)counts[i.assignedTo]++; });
-    return counts.person1<=counts.person2?'person1':'person2';
+  function chooseAssignee() {
+    // v2.4: chores belong to the household, not a specific person. Keep a
+    // neutral legacy value so older backups/instances remain compatible.
+    return 'either';
   }
 
   function getOpenRecurringInstance(choreId) {
@@ -564,24 +551,21 @@
     if(!dates.length)return null;dates.sort();return dates[dates.length-1];
   }
 
-  function editCompletedInstance(id,completedBy,completedDate){
+  function editCompletedInstance(id,completedDate){
     const i=instanceById(id);if(!i||!i.completed)return false;
     const actualDate=completedDate||completionDateOf(i)||toISO(today());
     if(actualDate>toISO(today())){toast('A completion date cannot be in the future');return false;}
     const oldDate=completionDateOf(i)||actualDate;
-    const oldBy=i.completedBy||null;
     const chore=choreById(i.choreId);
     const oldLatest=chore?latestCompletedInstanceDate(chore.id):null;
     const historyRow=state.history.find(h=>h.instanceId===i.id&&h.action!=='skipped');
 
-    i.completedBy=completedBy;
     if(actualDate!==oldDate){
       i.completedDate=actualDate;
       i.completedAt=completionTimestampForDate(actualDate);
       i.completedTimeKnown=actualDate===toISO(today());
     }
     if(historyRow){
-      historyRow.completedBy=completedBy;
       historyRow.completedDate=actualDate;
       if(actualDate!==oldDate){
         historyRow.completedAt=i.completedAt;
@@ -602,18 +586,11 @@
         chore.nextDueOverride=null;
       }
       if(newLatest)chore.lastCompleted=newLatest;
-      // Assignment colors and automatic future assignment should reflect the
-      // person who actually did the latest chore, not an old planned owner.
-      if(oldBy!==completedBy||oldLatest!==newLatest){
-        state.instances.filter(x=>x.choreId===chore.id&&!isTerminalInstance(x)&&!x.manualPlan&&!x.pinned).forEach(x=>{
-          x.assignedTo=chooseAssignee(chore,startOfWeek(parseISO(planDateOf(x)||x.originalDue)));
-        });
-      }
     }
     saveState('Completion corrected');renderAll();return true;
   }
 
-  function completeInstance(id, completedBy, scheduleChoice=null, completedDate=null) {
+  function completeInstance(id, scheduleChoice=null, completedDate=null) {
     const i=instanceById(id); if(!i) return false;
     const actualDate=completedDate||toISO(today());
     if(actualDate>toISO(today())){toast('A completion date cannot be in the future');return false;}
@@ -626,8 +603,8 @@
     const covered=i.choreId?state.instances.filter(x=>x.id!==i.id&&x.choreId===i.choreId&&!isTerminalInstance(x)&&x.originalDue&&x.originalDue<=actualDate):[];
     covered.forEach(x=>{x.skipped=true;x.skippedAt=now.toISOString();x.skipSource='covered-by-completion';x.pinned=false;});
     const satisfiedThrough=maxISO(i.originalDue,...covered.map(x=>x.originalDue));
-    i.completed=true; i.completedAt=completedAt; i.completedDate=actualDate; i.completedTimeKnown=actualDate===toISO(today()); i.completedBy=completedBy;
-    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedBy, completedAt, completedDate:actualDate, completedTimeKnown:actualDate===toISO(today()), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan, coveredCycles:covered.length });
+    i.completed=true; i.completedAt=completedAt; i.completedDate=actualDate; i.completedTimeKnown=actualDate===toISO(today()); i.completedBy=null;
+    state.history.push({ id:uid('hist'), instanceId:i.id, choreId:i.choreId||null, name:i.name, category:i.category, completedAt, completedDate:actualDate, completedTimeKnown:actualDate===toISO(today()), originallyDue:i.originalDue||intendedPlan, plannedFor:intendedPlan, coveredCycles:covered.length });
     if(i.choreId){
       const chore=choreById(i.choreId);
       if(chore){
@@ -725,7 +702,7 @@
     const chore=choreById(i.choreId);
     rollOlderOpenCycles(i,'current-cycle-rescheduled');
     setPlanDate(i,date);
-    i.assignedTo=assignee;
+    i.assignedTo='either';
     i.snoozed=Boolean(i.originalDue&&date!==i.originalDue);
     i.manualPlan=true;
     i.pinned=Boolean(pinned);
@@ -744,12 +721,12 @@
     let existing=state.instances.find(i=>i.choreId===choreId&&!i.completed&&!i.skipped&&!i.cancelled&&(i.originalDue||planDateOf(i))===dueDate);
     if(existing){
       const oldPlan=planDateOf(existing)||dueDate;
-      setPlanDate(existing,date);existing.assignedTo=assignee;existing.snoozed=date!==dueDate;existing.manualPlan=true;existing.pinned=Boolean(pinned);
+      setPlanDate(existing,date);existing.assignedTo='either';existing.snoozed=date!==dueDate;existing.manualPlan=true;existing.pinned=Boolean(pinned);
       rebaseFuturePlansAfterAssumptionChange(chore,existing,oldPlan,date,'plan');
     }else{
       existing={
         id:uid('inst'),choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,
-        originalDue:dueDate,scheduledDate:date,plannedDate:date,assignedTo:assignee||normalizeAssignee(chore.assignee)||'either',
+        originalDue:dueDate,scheduledDate:date,plannedDate:date,assignedTo:'either',
         completed:false,completedAt:null,oneOff:false,snoozed:date!==dueDate,plannedFromForecast:true,manualPlan:true,pinned:Boolean(pinned),createdAt:new Date().toISOString()
       };
       state.instances.push(existing);
@@ -820,7 +797,7 @@
     document.getElementById('completedTodayCount').textContent=completed.length;
     const mini=document.getElementById('completedTodayList'); mini.innerHTML='';
     completed.slice().sort((a,b)=>(b.completedAt||'').localeCompare(a.completedAt||'')).slice(0,5).forEach(i=>{
-      const div=document.createElement('div');div.className='mini-item'; div.innerHTML=`<strong>${esc(i.name)}</strong><span>${esc(personLabel(i.completedBy))}</span>`;mini.appendChild(div);
+      const div=document.createElement('div');div.className='mini-item'; div.innerHTML=`<strong>${esc(i.name)}</strong><span>Completed</span>`;mini.appendChild(div);
     });
     if(!completed.length) mini.innerHTML='<div class="tiny-text">Nothing marked off yet — that’s okay.</div>';
   }
@@ -935,9 +912,9 @@
             <div><span>Rhythm</span><strong>${esc(recurrenceText(chore))}</strong></div>
             <div><span>${routineDateWord(chore)}</span><strong>${formatShort(info.due)}</strong></div>
             <div><span>Grace through</span><strong>${formatShort(info.graceEnd)}</strong></div>
-            ${openInst?`<div><span>Planned</span><strong>${formatShort(planDateOf(openInst))} • ${esc(personLabel(openInst.assignedTo))}${openInst.pinned?' • 📌':''}</strong></div>`:''}
+            ${openInst?`<div><span>Planned</span><strong>${formatShort(planDateOf(openInst))}${openInst.pinned?' • 📌':''}</strong></div>`:''}
           </div>
-          <div class="overview-detail-actions"><button type="button" class="primary-btn overview-done">✓ Mark done</button>${openInst?'<button type="button" class="secondary-btn overview-snooze">Move / snooze</button>':''}<button type="button" class="text-btn overview-edit">Edit chore</button></div>
+          <div class="overview-detail-actions"><button type="button" class="primary-btn overview-done">✓ Mark done</button>${openInst?'<button type="button" class="secondary-btn overview-snooze">Move / re-plan</button>':''}<button type="button" class="text-btn overview-edit">Edit chore</button></div>
         </div>`;
       const main=card.querySelector('.overview-card-main'),details=card.querySelector('.overview-details');
       main.addEventListener('click',()=>{const opening=details.classList.contains('hidden');details.classList.toggle('hidden',!opening);main.setAttribute('aria-expanded',String(opening));});
@@ -963,8 +940,8 @@
     const dueNote=instanceTimingNote(i);
     el.innerHTML=`
       <button class="done-check" aria-label="Mark ${esc(i.name)} complete">✓</button>
-      <div><div class="task-name">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="task-meta"><span>${esc(personLabel(i.assignedTo))}</span><span>•</span><span>${esc(dueNote)}</span>${statusBadge}</div></div>
-      <div class="task-actions"><span class="badge ${i.importance||'regular'}">${i.oneOff?'One-off':importanceLabel[i.importance]||'Regular'}</span><button class="more-btn" aria-label="Move or reassign">•••</button></div>`;
+      <div><div class="task-name">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="task-meta"><span>${esc(effortLabel(effortScoreForChore(choreById(i.choreId)||i)))} effort</span><span>•</span><span>${esc(dueNote)}</span>${statusBadge}</div></div>
+      <div class="task-actions"><span class="badge ${i.importance||'regular'}">${i.oneOff?'One-off':importanceLabel[i.importance]||'Regular'}</span><button class="more-btn" aria-label="Move or re-plan">•••</button></div>`;
     el.querySelector('.done-check').addEventListener('click',()=>openComplete(i.id));
     el.querySelector('.more-btn').addEventListener('click',()=>openMove(i.id));
     return el;
@@ -1062,7 +1039,7 @@
       projectedDueDates(chore,startIso,endIso).forEach(due=>{
         if(represented.has(`${chore.id}|${due}`)) return;
         if(!map.has(due)) map.set(due,[]);
-        map.get(due).push({preview:true,choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,dueDate:due,assignedTo:normalizeAssignee(chore.assignee)});
+        map.get(due).push({preview:true,choreId:chore.id,name:chore.name,category:chore.category,importance:chore.importance,effort:chore.effort||'auto',dueDate:due});
       });
     });
     return map;
@@ -1073,7 +1050,7 @@
       return !state.instances.some(i=>i.choreId===c.id&&i.completed&&completionDateOf(i)===iso);
     }).map(c=>({
       id:`history-seed|${c.id}|${iso}`,historicalSeed:true,choreId:c.id,name:c.name,category:c.category,importance:c.importance,
-      scheduledDate:iso,plannedDate:iso,completed:true,completedAt:`${iso}T12:00:00`,completedBy:null,assignedTo:'either',oneOff:false
+      scheduledDate:iso,plannedDate:iso,completed:true,completedAt:`${iso}T12:00:00`,completedBy:null,assignedTo:'either',effort:c.effort||'auto',oneOff:false
     }));
   }
 
@@ -1118,19 +1095,21 @@
   function compactPlannerItem(item){
     const btn=document.createElement('button');
     btn.type='button';
+    const chore=choreById(item.choreId)||item;
+    const effortText=effortLabel(effortScoreForChore(chore));
     if(item.preview){
-      btn.className=`calendar-task forecast ${assigneeClass(item.assignedTo)}`;
-      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(personLabel(item.assignedTo))}</span>`;
-      btn.title=`${item.name} • ${routineDateWord(choreById(item.choreId),true)} ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
+      btn.className=`calendar-task forecast ${effortClass(chore)}`;
+      btn.innerHTML=`<span class="calendar-task-name">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(effortText)}</span>`;
+      btn.title=`${item.name} • ${effortText} effort • ${routineDateWord(choreById(item.choreId),true)} ${formatShort(item.dueDate)} • ${recurrenceText(choreById(item.choreId))}`;
       btn.addEventListener('contextmenu',e=>{e.preventDefault();e.stopPropagation();openForecastMove(item.choreId,item.dueDate);});
       addPlannerLongPress(btn,()=>openForecastMove(item.choreId,item.dueDate));
     } else {
-      const owner=item.completed?(item.completedBy||'either'):(item.assignedTo||'either');
-      btn.className=`calendar-task planned ${assigneeClass(owner)}${item.completed?' done':''}${item.skipped?' skipped':''}${item.pinned?' pinned':''}`;
-      btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${item.historicalSeed?'done':item.skipped?(item.skipSource==='covered-by-completion'?'rolled forward':'skipped'):esc(item.completed?(item.completedBy?personLabel(item.completedBy):'done'):personLabel(item.assignedTo))}</span>`;
-      btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.skipped?`${item.name} • ${item.skipSource==='covered-by-completion'?'covered by a later completion':'skipped this cycle'}`:item.completed?`${item.name} • completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`:`${item.name} • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
+      btn.className=`calendar-task planned ${effortClass(chore)}${item.completed?' done':''}${item.skipped?' skipped':''}${item.pinned?' pinned':''}`;
+      const meta=item.historicalSeed?'done':item.skipped?(item.skipSource==='covered-by-completion'?'rolled forward':'skipped'):item.completed?'done':effortText;
+      btn.innerHTML=`<span class="calendar-task-name">${item.pinned?'📌 ':''}${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</span><span class="calendar-task-meta">${esc(meta)}</span>`;
+      btn.title=item.historicalSeed?`${item.name} • last completed ${formatShort(item.scheduledDate)}`:item.skipped?`${item.name} • ${item.skipSource==='covered-by-completion'?'covered by a later completion':'skipped this cycle'}`:item.completed?`${item.name} • completed`:`${item.name} • ${effortText} effort • planned for ${formatShort(planDateOf(item))}${item.pinned?' • pinned':''}`;
       if(item.historicalSeed||item.skipped||item.completed){
-        btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else toast(`Completed${item.completedBy?` by ${personLabel(item.completedBy)}`:''}`);});
+        btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else toast('Completed');});
       }
       btn.addEventListener('contextmenu',e=>{if(item.historicalSeed||item.skipped)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
       if(!item.historicalSeed&&!item.skipped)addPlannerLongPress(btn,()=>openPlannerQuickMenu(item.id));
@@ -1182,7 +1161,7 @@
     const legend=document.getElementById('plannerLegend');
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.classList.toggle('active',b.dataset.plannerView===plannerViewMode));
     legend.classList.remove('hidden');
-    legend.innerHTML=`<span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-person1"></i> ${esc(personLabel('person1'))}</span><span><i class="legend-person2"></i> ${esc(personLabel('person2'))}</span><span><i class="legend-either"></i> Either</span><span>📌 Pinned</span>`;
+    legend.innerHTML=`<span><i class="legend-solid"></i> Planned</span><span><i class="legend-outline"></i> Forecast</span><span><i class="legend-quick"></i> Quick</span><span><i class="legend-medium"></i> Medium</span><span><i class="legend-bigger"></i> Bigger</span><span>📌 Pinned</span>`;
     if(plannerViewMode==='week'){
       title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Routine dates are targets unless they are truly fixed. Planned is your intention; completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
@@ -1208,10 +1187,10 @@
           const forecastTarget=parseForecastMoveKey(payload);
           if(forecastTarget){
             const chore=choreById(forecastTarget.choreId);
-            scheduleForecast(forecastTarget.choreId,forecastTarget.dueDate,iso,chore?chooseAssignee(chore,ws):'either');
+            scheduleForecast(forecastTarget.choreId,forecastTarget.dueDate,iso,'either');
           }else{
             const existing=instanceById(payload);
-            moveInstance(payload,iso,existing?.assignedTo||'either',Boolean(existing?.pinned));
+            moveInstance(payload,iso,'either',Boolean(existing?.pinned));
           }
         });
         board.appendChild(col);
@@ -1291,16 +1270,17 @@
   }
 
   function plannerCard(i){
-    const owner=i.completed?(i.completedBy||'either'):(i.assignedTo||'either');
-    const el=document.createElement('article'); el.className=`planner-card ${assigneeClass(owner)}${i.completed?' done':''}${i.skipped?' skipped':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.skipped&&!i.historicalSeed; el.dataset.id=i.id;
+    const chore=choreById(i.choreId)||i;
+    const effortText=effortLabel(effortScoreForChore(chore));
+    const el=document.createElement('article'); el.className=`planner-card ${effortClass(chore)}${i.completed?' done':''}${i.skipped?' skipped':''}${i.pinned?' pinned':''}${i.historicalSeed?' historical-seed':''}`; el.draggable=!i.completed&&!i.skipped&&!i.historicalSeed; el.dataset.id=i.id;
     const overdue=statusForInstance(i)==='overdue';
     const plan=planDateOf(i);
-    const chore=choreById(i.choreId);
     const completedDate=completionDateOf(i);
     const timing=(!i.completed&&i.originalDue&&i.originalDue!==plan)
-      ?`<div class="original-due">${overdue?'Past target • ':''}${routineDateWord(chore,true)} ${formatShort(i.originalDue)}</div>`
+      ?`<div class="original-due">${overdue?'Past target • ':''}${routineDateWord(choreById(i.choreId),true)} ${formatShort(i.originalDue)}</div>`
       :(i.completed&&!i.historicalSeed&&completedDate&&plan&&completedDate!==plan?`<div class="plan-history-note">planned ${formatShort(plan)}</div>`:'');
-    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="assignee-dot">${esc(i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?(i.completedBy?personLabel(i.completedBy):'Completed'):personLabel(i.assignedTo))}</span></div>${timing}`;
+    const meta=i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?'Completed':`${effortText} effort`;
+    el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="effort-dot">${esc(meta)}</span></div>${timing}`;
     el.addEventListener('dragstart',e=>{if(!i.historicalSeed&&!i.skipped)e.dataTransfer.setData('text/plain',i.id);});
     el.addEventListener('contextmenu',e=>{if(i.historicalSeed||i.skipped)return;e.preventDefault();openPlannerQuickMenu(i.id,null,{x:e.clientX,y:e.clientY});});
     if(!i.historicalSeed&&!i.skipped)addPlannerLongPress(el,()=>openPlannerQuickMenu(i.id));
@@ -1310,13 +1290,14 @@
 
   function plannerForecastCard(item){
     const chore=choreById(item.choreId);
+    const effortText=effortLabel(effortScoreForChore(chore||item));
     const el=document.createElement('article');
-    el.className=`planner-card forecast-card ${assigneeClass(item.assignedTo)}`;
+    el.className=`planner-card forecast-card ${effortClass(chore||item)}`;
     el.draggable=true;
     el.dataset.choreId=item.choreId;
     el.dataset.dueDate=item.dueDate;
-    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(personLabel(item.assignedTo))}</span></div><div class="forecast-due">${routineDateWord(chore,true)} ${formatShort(item.dueDate)}</div>`;
-    el.title=chore?`${item.name} • ${recurrenceText(chore)} • right-click or hold to plan`:`${item.name} • forecast • right-click or hold to plan`;
+    el.innerHTML=`<div class="planner-card-title">${CATEGORY_EMOJI[item.category]||'•'} ${esc(item.name)}</div><div class="planner-card-meta"><span class="forecast-label">Forecast • ${esc(effortText)} effort</span></div><div class="forecast-due">${routineDateWord(chore,true)} ${formatShort(item.dueDate)}</div>`;
+    el.title=chore?`${item.name} • ${effortText} effort • ${recurrenceText(chore)} • right-click or hold to plan`:`${item.name} • forecast • right-click or hold to plan`;
     el.addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain',forecastMoveKey(item.choreId,item.dueDate)));
     el.addEventListener('contextmenu',e=>{e.preventDefault();openForecastMove(item.choreId,item.dueDate);});
     addPlannerLongPress(el,()=>openForecastMove(item.choreId,item.dueDate));
@@ -1349,7 +1330,6 @@
     const q=(document.getElementById('choreSearch')?.value||'').trim().toLowerCase();
     const importance=choreFilters.importance;
     const effort=choreFilters.effort;
-    const assignee=choreFilters.assignee;
     const tag=choreFilters.tag;
     const status=choreFilters.status;
     const importanceRank={essential:0,regular:1,low:2};
@@ -1360,7 +1340,6 @@
       if(activeCategory!=='All'&&c.category!==activeCategory) return false;
       if(importance!=='all'&&c.importance!==importance) return false;
       if(effort!=='all'&&(c.effort||'auto')!==effort) return false;
-      if(assignee!=='all'&&normalizeAssignee(c.assignee)!==assignee) return false;
       if(tag!=='all'&&!normalizeTags(c.tags).some(t=>tagKey(t)===tagKey(tag))) return false;
       if(status!=='all'){
         const s=choreDueStatus(c);
@@ -1383,7 +1362,6 @@
       if(key==='effort') return effortRank[c.effort||'auto']??0;
       if(key==='lastCompleted') return c.lastCompleted?parseISO(c.lastCompleted).getTime():0;
       if(key==='nextDue') return parseISO(nextDue(c)).getTime();
-      if(key==='assignee') return personLabel(normalizeAssignee(c.assignee)).toLowerCase();
       return c.name.toLowerCase();
     };
     chores.sort((a,b)=>{
@@ -1457,12 +1435,6 @@
     const filters=document.getElementById('categoryFilters'); filters.innerHTML='';
     ['All',...CATEGORIES].forEach(cat=>{const b=document.createElement('button');b.className='chip'+(activeCategory===cat?' active':'');b.textContent=cat;b.addEventListener('click',()=>{activeCategory=cat;renderChores();});filters.appendChild(b);});
 
-    const personFilter=document.getElementById('assigneeFilter');
-    if(personFilter){
-      const [p1,p2]=currentPeople();
-      personFilter.innerHTML=`<option value="all">All people</option><option value="either">Either</option><option value="person1">${esc(p1)}</option><option value="person2">${esc(p2)}</option>`;
-      personFilter.value=choreFilters.assignee;
-    }
     const tagFilter=document.getElementById('tagFilter');
     if(tagFilter){
       const tags=allChoreTags();
@@ -1485,14 +1457,14 @@
     const body=document.getElementById('choreTableBody');body.innerHTML='';
     const mobile=document.getElementById('choreCardsMobile');mobile.innerHTML='';
     if(!chores.length){
-      body.innerHTML='<tr><td colspan="10"><div class="table-empty">No chores match these filters.</div></td></tr>';
+      body.innerHTML='<tr><td colspan="9"><div class="table-empty">No chores match these filters.</div></td></tr>';
       mobile.innerHTML='<div class="empty-state compact-empty"><h3>No matching chores</h3><p>Try clearing a filter or search.</p></div>';
     }
     chores.forEach(c=>{
       const checked=selectedChoreIds.has(c.id);
       const tags=tagMarkup(c.tags);
       const tr=document.createElement('tr');tr.classList.toggle('selected-row',checked);
-      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${effortSettingMarkup(c)}</td><td>${relativeDate(c.lastCompleted)}</td><td>${choreNextMarkup(c)}</td><td>${esc(personLabel(normalizeAssignee(c.assignee)))}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
+      tr.innerHTML=`<td class="select-col"><input class="chore-select" type="checkbox" ${checked?'checked':''} aria-label="Select ${esc(c.name)}" /></td><td class="chore-title-cell"><strong>${esc(c.name)}</strong><span>${esc(c.areas||'')}</span>${tags?`<div class="tag-row">${tags}</div>`:''}</td><td>${esc(c.category)}</td><td>${esc(recurrenceText(c))}</td><td><span class="badge ${c.importance}">${importanceLabel[c.importance]}</span></td><td>${effortSettingMarkup(c)}</td><td>${relativeDate(c.lastCompleted)}</td><td>${choreNextMarkup(c)}</td><td class="table-actions"><button class="text-btn edit-chore">Edit</button><button class="text-btn danger delete-chore">Delete</button></td>`;
       tr.querySelector('.chore-select').addEventListener('change',e=>toggleChoreSelection(c.id,e.target.checked));
       tr.querySelector('.edit-chore').addEventListener('click',()=>openChore(c.id));
       tr.querySelector('.delete-chore').addEventListener('click',()=>deleteChore(c.id)); body.appendChild(tr);
@@ -1509,7 +1481,7 @@
     if(!selectedChoreIds.size) return;
     const category=document.getElementById('batchCategory');
     category.innerHTML='<option value="">No change</option>'+CATEGORIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchAssignee').value='';document.getElementById('batchEffort').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
+    category.value='';document.getElementById('batchImportance').value='';document.getElementById('batchEffort').value='';document.getElementById('batchTagMode').value='none';document.getElementById('batchTags').value='';
     document.getElementById('batchTagsLabel').classList.add('hidden');
     document.getElementById('batchEditSummary').textContent=`Editing ${selectedChoreIds.size} selected chore${selectedChoreIds.size===1?'':'s'}. Only chosen fields will change.`;
     document.getElementById('batchEditDialog').showModal();
@@ -1519,16 +1491,14 @@
     const ids=new Set(selectedChoreIds);if(!ids.size)return;
     const category=document.getElementById('batchCategory').value;
     const importance=document.getElementById('batchImportance').value;
-    const assignee=document.getElementById('batchAssignee').value;
     const effort=document.getElementById('batchEffort').value;
     const tagMode=document.getElementById('batchTagMode').value;
     const tags=normalizeTags(document.getElementById('batchTags').value);
-    if(!category&&!importance&&!assignee&&!effort&&tagMode==='none'){toast('Choose something to change');return;}
+    if(!category&&!importance&&!effort&&tagMode==='none'){toast('Choose something to change');return;}
     state.chores.forEach(c=>{
       if(!ids.has(c.id))return;
       if(category)c.category=category;
       if(importance)c.importance=importance;
-      if(assignee)c.assignee=assignee;
       if(effort)c.effort=effort;
       const current=normalizeTags(c.tags);
       if(tagMode==='replace')c.tags=tags;
@@ -1537,10 +1507,6 @@
       if(tagMode==='remove'){const remove=new Set(tags.map(tagKey));c.tags=current.filter(t=>!remove.has(tagKey(t)));}
       state.instances.filter(i=>i.choreId===c.id&&!i.completed).forEach(i=>{
         i.category=c.category;i.importance=c.importance;
-        // A batch change to the default person should update routine-generated
-        // upcoming plans, while preserving occurrences the user explicitly
-        // moved/planned (those may intentionally be assigned differently).
-        if(assignee&&!i.manualPlan&&!i.pinned)i.assignedTo=assignee;
       });
     });
     const count=ids.size;selectedChoreIds.clear();
@@ -1560,12 +1526,10 @@
     const stamp=h=>h.completedAt||h.skippedAt||'';
     const rows=state.history.slice().sort((a,b)=>stamp(b).localeCompare(stamp(a)));
     if(!rows.length){list.innerHTML='<div class="empty-state"><div class="empty-illustration">✓</div><h3>No history yet</h3><p>Completed and intentionally skipped chore cycles will show up here.</p></div>';return;}
-    rows.forEach(h=>{const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);const d=new Date(stamp(h));const timeLine=!skipped&&h.completedTimeKnown===false?'':`<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`;const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}${timeLine}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}${!skipped&&h.completedTimeKnown===false?' <span class="badge">Logged later</span>':''}</div><div class="history-who">${skipped?'Intentional':esc(personLabel(h.completedBy))}</div>`;list.appendChild(row);});
+    rows.forEach(h=>{const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);const d=new Date(stamp(h));const timeLine=!skipped&&h.completedTimeKnown===false?'':`<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`;const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}${timeLine}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}${!skipped&&h.completedTimeKnown===false?' <span class="badge">Logged later</span>':''}</div><div class="history-who">${skipped?'Intentional':'Completed'}</div>`;list.appendChild(row);});
   }
 
   function renderSettings(){
-    const [p1,p2]=currentPeople();
-    document.getElementById('person1Input').value=p1;document.getElementById('person2Input').value=p2;
     document.getElementById('graceEssential').value=state.settings.grace.essential;document.getElementById('graceRegular').value=state.settings.grace.regular;document.getElementById('graceLow').value=state.settings.grace.low;
     document.getElementById('supabaseUrl').value=state.settings.supabaseUrl||'';document.getElementById('supabaseKey').value=state.settings.supabaseKey||'';document.getElementById('syncId').value=state.settings.syncId||'mak-household';
     document.getElementById('syncDot').classList.toggle('connected',!!(state.settings.supabaseUrl&&state.settings.supabaseKey));
@@ -1577,11 +1541,8 @@
   }
 
   function renderPeopleSelects(){
-    const [p1,p2]=currentPeople();
-    const opts=`<option value="either">Either</option><option value="person1">${esc(p1)}</option><option value="person2">${esc(p2)}</option>`;
-    ['choreAssignee','oneOffAssignee','moveAssignee'].forEach(id=>{const el=document.getElementById(id); if(el){const old=el.value;el.innerHTML=opts;if([...el.options].some(o=>o.value===old))el.value=old;}});
-    const batchAssignee=document.getElementById('batchAssignee');if(batchAssignee){const old=batchAssignee.value;batchAssignee.innerHTML=`<option value="">No change</option>${opts}`;if([...batchAssignee.options].some(o=>o.value===old))batchAssignee.value=old;}
-    const completed=document.getElementById('completedBy');if(completed){const old=completed.value;completed.innerHTML=`<option value="person1">${esc(p1)}</option><option value="person2">${esc(p2)}</option>`;if(old)completed.value=old;}
+    // v2.4 keeps this initializer name for compatibility, but the app no longer
+    // assigns chores to people. Only static category choices need populating.
     const catOpts=CATEGORIES.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
     ['choreCategory','oneOffCategory'].forEach(id=>{const el=document.getElementById(id);if(el&&!el.options.length)el.innerHTML=catOpts;});
   }
@@ -1617,7 +1578,7 @@
   function openChore(id=null){
     const d=document.getElementById('choreDialog'), c=id?choreById(id):null;
     document.getElementById('choreModalKicker').textContent=c?'EDIT ROUTINE':'NEW ROUTINE';document.getElementById('choreModalTitle').textContent=c?'Edit chore':'Add chore';
-    document.getElementById('choreId').value=c?.id||'';document.getElementById('choreName').value=c?.name||'';document.getElementById('choreCategory').value=c?.category||'Cleaning';document.getElementById('choreAssignee').value=normalizeAssignee(c?.assignee||'either');
+    document.getElementById('choreId').value=c?.id||'';document.getElementById('choreName').value=c?.name||'';document.getElementById('choreCategory').value=c?.category||'Cleaning';
     const type=c?.recurrenceType||'interval';document.getElementById('recurrenceType').value=type;
     document.getElementById('recurrenceValue').value=c?.recurrenceValue||7;document.getElementById('recurrenceUnit').value=c?.recurrenceUnit||'days';
     document.getElementById('weeklyInterval').value=type==='weekly'?(c?.recurrenceValue||1):1;document.getElementById('weeklyDay').value=String(c?.weekday??0);
@@ -1666,7 +1627,7 @@
     const submittedLastDueSatisfied=submittedLastCompleted===(existing?.lastCompleted||null)?(existing?.lastDueSatisfied||null):submittedLastCompleted;
     const data={
       id:id||uid('chore'),name:document.getElementById('choreName').value.trim(),category:document.getElementById('choreCategory').value,
-      assignee:document.getElementById('choreAssignee').value,...recurrence,
+      assignee:'either',...recurrence,
       importance:document.getElementById('choreImportance').value,effort:document.getElementById('choreEffort').value||'auto',graceOverride:document.getElementById('choreGrace').value===''?null:Number(document.getElementById('choreGrace').value),scheduleBehavior:recurrence.recurrenceType==='interval'?document.getElementById('scheduleBehavior').value:'fixed',dateMeaning:document.getElementById('choreDateMeaning').value||'target',
       lastCompleted:submittedLastCompleted,lastDueSatisfied:submittedLastDueSatisfied,tags:normalizeTags(document.getElementById('choreTags').value),areas:document.getElementById('choreAreas').value.trim(),active:true,
       startDate,nextDueOverride:null,anchorDate:startDate,createdAt:existing?.createdAt||new Date().toISOString()
@@ -1712,7 +1673,6 @@
     document.getElementById('completeEditHelp').classList.add('hidden');
     document.getElementById('toggleCompletionDateBtn').classList.remove('hidden');
     document.getElementById('completeInstanceId').value=id;document.getElementById('completeTaskName').textContent=i.name;
-    const select=document.getElementById('completedBy'); select.value=['person1','person2'].includes(i.assignedTo)?i.assignedTo:'person1';
     const completedDate=document.getElementById('completedDate');
     const planned=planDateOf(i);
     const suggested=chooseDate&&planned&&planned<=toISO(today())?planned:toISO(today());
@@ -1730,7 +1690,6 @@
     document.getElementById('completeEditHelp').classList.remove('hidden');
     document.getElementById('toggleCompletionDateBtn').classList.add('hidden');
     document.getElementById('completeInstanceId').value=id;document.getElementById('completeTaskName').textContent=i.name;
-    const select=document.getElementById('completedBy');select.value=['person1','person2'].includes(i.completedBy)?i.completedBy:'person1';
     const completedDate=document.getElementById('completedDate');completedDate.value=completionDateOf(i)||toISO(today());completedDate.max=toISO(today());
     document.getElementById('completedDateLabel').classList.remove('hidden');
     document.getElementById('completionScheduleChoice').classList.add('hidden');
@@ -1745,7 +1704,6 @@
     document.getElementById('moveTaskName').textContent=i.name;
     document.getElementById('moveDueHint').textContent=i.originalDue?`Routine ${routineDateWord(chore,true)}: ${formatLong(i.originalDue)}`:'One-off chore';
     document.getElementById('moveDate').value=planDateOf(i);
-    document.getElementById('moveAssignee').value=i.assignedTo||'either';
     document.getElementById('pinPlanDate').checked=Boolean(i.pinned);
     const skipBtn=document.getElementById('skipOccurrenceBtn');skipBtn.classList.remove('hidden');
     document.getElementById('moveSkipHelp').classList.remove('hidden');
@@ -1758,7 +1716,6 @@
     document.getElementById('moveTaskName').textContent=chore.name;
     document.getElementById('moveDueHint').textContent=`Routine ${routineDateWord(chore,true)}: ${formatLong(dueDate)}`;
     document.getElementById('moveDate').value=dueDate;
-    document.getElementById('moveAssignee').value=chooseAssignee(chore,startOfWeek(parseISO(dueDate)));
     document.getElementById('pinPlanDate').checked=false;
     document.getElementById('skipOccurrenceBtn').classList.add('hidden');
     document.getElementById('moveSkipHelp').classList.add('hidden');
@@ -1768,7 +1725,7 @@
   function addOneOff(){
     const name=document.getElementById('oneOffName').value.trim();if(!name)return;
     const date=document.getElementById('oneOffDate').value;
-    state.instances.push({id:uid('inst'),choreId:null,name,category:document.getElementById('oneOffCategory').value,importance:'regular',originalDue:date,scheduledDate:date,plannedDate:date,assignedTo:document.getElementById('oneOffAssignee').value,completed:false,oneOff:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()});
+    state.instances.push({id:uid('inst'),choreId:null,name,category:document.getElementById('oneOffCategory').value,importance:'regular',effort:document.getElementById('oneOffEffort').value||'medium',originalDue:date,scheduledDate:date,plannedDate:date,assignedTo:'either',completed:false,oneOff:true,manualPlan:true,pinned:false,createdAt:new Date().toISOString()});
     saveState('One-off chore added');document.getElementById('oneOffDialog').close();document.getElementById('oneOffForm').reset();renderAll();
   }
 
@@ -1790,7 +1747,7 @@
   function isSmallWinChore(chore){return effortScoreForChore(chore)===1;}
 
   function capacityPriority(i,mode){
-    const chore=choreById(i.choreId);
+    const chore=choreById(i.choreId)||i;
     const status=statusForInstance(i);
     const age=Math.max(0,daysBetween(planDateOf(i)||i.originalDue||toISO(today()),toISO(today())));
     let score=i.importance==='essential'?100:i.importance==='regular'?55:20;
@@ -1896,11 +1853,11 @@
         lastSuggestedAction=item.action;
         const group=document.createElement('div');group.className='capacity-group-label';group.textContent=item.action==='keep'?'KEEP TODAY':item.action==='move'?'MOVE':'SKIP THIS CYCLE';wrap.appendChild(group);
       }
-      const i=item.instance,chore=choreById(i.choreId),effort=effortScoreForChore(chore);
+      const i=item.instance,chore=choreById(i.choreId)||i,effort=effortScoreForChore(chore);
       const row=document.createElement('div');row.className=`capacity-row${item.smallWin?' small-win':''}`;row.dataset.instanceId=i.id;
       const word=instanceRoutineWord(i);
       const timing=i.originalDue?`${word} ${formatShort(i.originalDue)}`:`Planned ${formatShort(planDateOf(i))}`;
-      row.innerHTML=`<div class="capacity-row-main"><div class="capacity-row-name">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="capacity-row-meta">${esc(personLabel(i.assignedTo))} • ${esc(effortLabel(effort))} effort • ${esc(timing)}${item.smallWin?' • <span class="small-win-label">✨ small win</span>':''}<br>${esc(item.reason)}</div></div><div class="capacity-row-controls"><select aria-label="Recovery action for ${esc(i.name)}"><option value="keep">Keep today</option><option value="move">Move</option><option value="skip">Skip this cycle</option></select><input type="date" aria-label="New date for ${esc(i.name)}" /></div>`;
+      row.innerHTML=`<div class="capacity-row-main"><div class="capacity-row-name">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="capacity-row-meta">${esc(effortLabel(effort))} effort • ${esc(timing)}${item.smallWin?' • <span class="small-win-label">✨ small win</span>':''}<br>${esc(item.reason)}</div></div><div class="capacity-row-controls"><select aria-label="Recovery action for ${esc(i.name)}"><option value="keep">Keep today</option><option value="move">Move</option><option value="skip">Skip this cycle</option></select><input type="date" aria-label="New date for ${esc(i.name)}" /></div>`;
       const select=row.querySelector('select'),date=row.querySelector('input');select.value=item.action;date.value=item.date||toISO(addDays(today(),1));date.classList.toggle('hidden-date',item.action!=='move');
       select.addEventListener('change',()=>{item.action=select.value;if(item.action==='move'&&!item.date)item.date=date.value||toISO(addDays(today(),1));date.classList.toggle('hidden-date',item.action!=='move');updateCapacitySummary();});
       date.addEventListener('change',()=>{item.date=date.value;});
@@ -1923,11 +1880,11 @@
     capacityDraft.filter(x=>x.action==='skip').sort((a,b)=>(a.instance.originalDue||planDateOf(a.instance)).localeCompare(b.instance.originalDue||planDateOf(b.instance))).forEach(x=>skipInstance(x.instance.id,'capacity',true));
     capacityDraft.filter(x=>x.action==='move').sort((a,b)=>(a.instance.originalDue||planDateOf(a.instance)).localeCompare(b.instance.originalDue||planDateOf(b.instance))).forEach(x=>{
       const date=x.date&&x.date>t?x.date:toISO(addDays(today(),1));
-      moveInstance(x.instance.id,date,x.instance.assignedTo||'either',Boolean(x.instance.pinned),true);
+      moveInstance(x.instance.id,date,'either',Boolean(x.instance.pinned),true);
       x.instance.recoveryMoved=true;
     });
     capacityDraft.filter(x=>x.action==='keep').forEach(x=>{
-      if(planDateOf(x.instance)!==t)moveInstance(x.instance.id,t,x.instance.assignedTo||'either',Boolean(x.instance.pinned),true);
+      if(planDateOf(x.instance)!==t)moveInstance(x.instance.id,t,'either',Boolean(x.instance.pinned),true);
       x.instance.recoveryFocusDate=t;
     });
     saveState('Today reset to your capacity');
@@ -1945,13 +1902,13 @@
       .filter(i=>!isTerminalInstance(i)&&i.choreId&&planDateOf(i)>t&&planDateOf(i)<=horizon)
       .forEach(i=>{
         const chore=choreById(i.choreId);if(!chore)return;
-        candidates.push({kind:'planned',chore,instance:i,date:planDateOf(i),due:i.originalDue||planDateOf(i),assignedTo:i.assignedTo||normalizeAssignee(chore.assignee)});
+        candidates.push({kind:'planned',chore,instance:i,date:planDateOf(i),due:i.originalDue||planDateOf(i)});
       });
 
     const forecasts=plannerForecastMap(toISO(addDays(today(),1)),horizon);
     forecasts.forEach(items=>items.forEach(item=>{
       const chore=choreById(item.choreId);if(!chore)return;
-      candidates.push({kind:'forecast',chore,date:item.dueDate,due:item.dueDate,assignedTo:item.assignedTo||normalizeAssignee(chore.assignee)});
+      candidates.push({kind:'forecast',chore,date:item.dueDate,due:item.dueDate});
     }));
 
     // Extra Energy should offer one next opportunity per routine, not several
@@ -1982,9 +1939,9 @@
       card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${source} ${relativeDate(x.date).toLowerCase()}</span><span>•</span><span>${effortLabel(effortScoreForChore(x.chore))} effort</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Move to today</button>`;
       card.querySelector('button').addEventListener('click',()=>{
         if(x.kind==='planned'&&x.instance){
-          moveInstance(x.instance.id,t,x.instance.assignedTo||x.assignedTo||'either',Boolean(x.instance.pinned));
+          moveInstance(x.instance.id,t,'either',Boolean(x.instance.pinned));
         }else{
-          scheduleForecast(x.chore.id,x.due,t,x.assignedTo||chooseAssignee(x.chore,startOfWeek(today())),false);
+          scheduleForecast(x.chore.id,x.due,t,'either',false);
         }
         document.getElementById('energyDialog').close();
         toast('Moved into today — still optional');
@@ -1998,8 +1955,6 @@
   function minISO(...xs){return xs.filter(Boolean).sort()[0];}
 
   function saveSettings(){
-    const oldPeople=[...state.settings.people];
-    state.settings.people=[document.getElementById('person1Input').value.trim()||'Person 1',document.getElementById('person2Input').value.trim()||'Person 2'];
     state.settings.grace={essential:Number(document.getElementById('graceEssential').value)||0,regular:Number(document.getElementById('graceRegular').value)||0,low:Number(document.getElementById('graceLow').value)||0};
     state.settings.supabaseUrl=document.getElementById('supabaseUrl').value.trim();state.settings.supabaseKey=document.getElementById('supabaseKey').value.trim();state.settings.syncId=document.getElementById('syncId').value.trim()||'mak-household';
     saveState('Settings saved');renderAll();
@@ -2080,7 +2035,7 @@
     return {savedAt:new Date().toISOString(),chores};
   }
   function setCurrentAsDefault(){
-    if(!confirm(`Use the current ${state.chores.length} chore${state.chores.length===1?'':'s'} as your reset default? Names, categories, recurrence rules, start/next dates, importance, assignments, tags and notes will be saved. Completion history and this week's plan will not.`))return;
+    if(!confirm(`Use the current ${state.chores.length} chore${state.chores.length===1?'':'s'} as your reset default? Names, categories, recurrence rules, start/next dates, importance, tags and notes will be saved. Completion history and this week's plan will not.`))return;
     state.customDefault=defaultSnapshotFromCurrent();
     saveState('Current chore setup is now your default');renderSettings();
   }
@@ -2123,12 +2078,11 @@
     document.getElementById('choreSearch').addEventListener('input',renderChores);
     document.getElementById('importanceFilter').addEventListener('change',e=>{choreFilters.importance=e.target.value;renderChores();});
     document.getElementById('effortFilter').addEventListener('change',e=>{choreFilters.effort=e.target.value;renderChores();});
-    document.getElementById('assigneeFilter').addEventListener('change',e=>{choreFilters.assignee=e.target.value;renderChores();});
     document.getElementById('tagFilter').addEventListener('change',e=>{choreFilters.tag=e.target.value;renderChores();});
     document.getElementById('dueStatusFilter').addEventListener('change',e=>{choreFilters.status=e.target.value;renderChores();});
     document.getElementById('choreSortSelect').addEventListener('change',e=>{const [key,dir]=e.target.value.split(':');setChoreSort(key,dir);});
     document.querySelectorAll('.sort-head').forEach(btn=>btn.addEventListener('click',()=>setChoreSort(btn.dataset.sort)));
-    document.getElementById('clearChoreFiltersBtn').addEventListener('click',()=>{activeCategory='All';choreFilters={importance:'all',effort:'all',assignee:'all',tag:'all',status:'all'};document.getElementById('choreSearch').value='';renderChores();});
+    document.getElementById('clearChoreFiltersBtn').addEventListener('click',()=>{activeCategory='All';choreFilters={importance:'all',effort:'all',tag:'all',status:'all'};document.getElementById('choreSearch').value='';renderChores();});
     document.getElementById('selectAllFilteredBtn').addEventListener('click',()=>{const shown=filteredSortedChores();const all=shown.length&&shown.every(c=>selectedChoreIds.has(c.id));shown.forEach(c=>all?selectedChoreIds.delete(c.id):selectedChoreIds.add(c.id));renderChores();});
     document.getElementById('selectVisibleCheckbox').addEventListener('change',e=>{const shown=filteredSortedChores();shown.forEach(c=>e.target.checked?selectedChoreIds.add(c.id):selectedChoreIds.delete(c.id));renderChores();});
     document.getElementById('clearSelectionBtn').addEventListener('click',()=>{selectedChoreIds.clear();renderChores();});
@@ -2143,14 +2097,14 @@
     document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
     document.getElementById('saveChoreBtn').addEventListener('click',e=>{e.preventDefault();saveChoreFromForm();});
     document.getElementById('toggleCompletionDateBtn').addEventListener('click',()=>{const label=document.getElementById('completedDateLabel');setCompletionDatePickerVisible(label.classList.contains('hidden'));});
-    document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const form=document.getElementById('completeForm');const date=document.getElementById('completedDate').value||toISO(today());const by=document.getElementById('completedBy').value;if(form.dataset.mode==='edit'){if(editCompletedInstance(id,by,date))document.getElementById('completeDialog').close();return;}const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;if(completeInstance(id,by,choice,date))document.getElementById('completeDialog').close();});
-    document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const assignee=document.getElementById('moveAssignee').value;const pinned=document.getElementById('pinPlanDate').checked;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,assignee,pinned);else moveInstance(target,date,assignee,pinned);document.getElementById('moveDialog').close();});
+    document.getElementById('confirmCompleteBtn').addEventListener('click',e=>{e.preventDefault();const id=document.getElementById('completeInstanceId').value;const form=document.getElementById('completeForm');const date=document.getElementById('completedDate').value||toISO(today());if(form.dataset.mode==='edit'){if(editCompletedInstance(id,date))document.getElementById('completeDialog').close();return;}const chore=choreById(instanceById(id)?.choreId);let choice=null;if(chore?.scheduleBehavior==='ask')choice=document.querySelector('input[name="scheduleChoice"]:checked')?.value;if(completeInstance(id,choice,date))document.getElementById('completeDialog').close();});
+    document.getElementById('confirmMoveBtn').addEventListener('click',e=>{e.preventDefault();const target=document.getElementById('moveInstanceId').value;const date=document.getElementById('moveDate').value;const pinned=document.getElementById('pinPlanDate').checked;const forecast=parseForecastMoveKey(target);if(forecast)scheduleForecast(forecast.choreId,forecast.dueDate,date,'either',pinned);else moveInstance(target,date,'either',pinned);document.getElementById('moveDialog').close();});
     document.getElementById('skipOccurrenceBtn').addEventListener('click',()=>{const id=document.getElementById('moveInstanceId').value;const i=instanceById(id);if(!i)return;const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';if(confirm(`Skip “${i.name}” for this ${word} cycle? This will not count as completed.`)){document.getElementById('moveDialog').close();skipInstance(id,'manual');}});
     document.querySelectorAll('[data-planner-view]').forEach(b=>b.addEventListener('click',()=>{plannerViewMode=b.dataset.plannerView;plannerWeekStart=plannerViewMode==='month'?new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth(),1):startOfWeek(plannerWeekStart);renderPlanner();}));
     document.getElementById('prevWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()-1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?-14:-7);renderPlanner();});
     document.getElementById('nextWeekBtn').addEventListener('click',()=>{if(plannerViewMode==='month')plannerWeekStart=new Date(plannerWeekStart.getFullYear(),plannerWeekStart.getMonth()+1,1);else plannerWeekStart=addDays(plannerWeekStart,plannerViewMode==='fortnight'?14:7);renderPlanner();});
     document.getElementById('weekLabelBtn').addEventListener('click',()=>{plannerWeekStart=plannerViewMode==='month'?new Date(today().getFullYear(),today().getMonth(),1):startOfWeek(today());renderPlanner();});
-    document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerPeriod().start),toISO(today()));document.getElementById('oneOffAssignee').value='either';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
+    document.getElementById('addOneOffBtn').addEventListener('click',()=>{document.getElementById('oneOffDate').value=maxISO(toISO(plannerPeriod().start),toISO(today()));document.getElementById('oneOffEffort').value='medium';document.getElementById('oneOffCategory').value='Cleaning';document.getElementById('oneOffDialog').showModal();});
     document.getElementById('saveOneOffBtn').addEventListener('click',e=>{e.preventDefault();addOneOff();});
     document.getElementById('recoveryNudgeBtn').addEventListener('click',openCapacityMode);
     document.getElementById('mobileMoreBtn')?.addEventListener('click',()=>document.getElementById('mobileMoreDialog').showModal());
