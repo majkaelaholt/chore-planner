@@ -37,17 +37,21 @@ with check (true);
 
 ## 2. Add your credentials in the app
 
-Open **Settings → Supabase sync** and paste:
+Open **Settings → Supabase auto-save** and paste:
 
 - Project URL
 - Publishable / anon key
 - A household sync ID, e.g. `mak-household`
 
-Then use:
-
-- **Push backup** to save the current app state to Supabase
-- **Pull backup** to replace the current local state with the saved cloud state
+For an existing install, use **Push now** once on the device whose current data you want to keep, then **Pull now** once on the other device. After that, leave **Automatically sync changes** enabled and normal edits will sync without manual backup steps.
 
 ## Security note
 
 This starter schema is deliberately simple for a personal prototype and permits anonymous access to rows if someone knows the project endpoint and row ID. For a public/shared production app, add Supabase Auth and user-scoped RLS policies before storing sensitive data.
+
+
+## Automatic sync (v1.27+)
+
+Once the Project URL, publishable/anon key, and Household Sync ID are saved, **Automatically sync changes** can stay enabled. Household always saves locally first, then sends a debounced cloud save to the same `household_state` row. It also checks for newer cloud data on launch/focus/online.
+
+On the first v1.27 launch of an existing device, if its local data does not match the cloud and the app has no previous sync marker, choose **Push now** on the device whose current data you want to keep, then **Pull now** on the other device. After that, automatic sync tracks the common baseline. If both devices later change independently before seeing each other's updates, auto-sync pauses rather than overwriting either copy.

@@ -187,6 +187,14 @@ input, select { width: 100%; border: 1px solid #d8cec3; border-radius: 11px; bac
 .button-row { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 16px; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #c7beb3; margin-top: 5px; }
 .status-dot.connected { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.status-dot.syncing { animation: syncPulse 1s ease-in-out infinite alternate; }
+.status-dot.error { background: #b96969; box-shadow: 0 0 0 4px rgba(185,105,105,.13); }
+@keyframes syncPulse { from { opacity: .45; } to { opacity: 1; } }
+.sync-toggle { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.45); cursor: pointer; }
+.sync-toggle input { margin-top: 3px; width: 17px; height: 17px; accent-color: var(--accent); flex: 0 0 auto; }
+.sync-toggle span { display: grid; gap: 2px; }
+.sync-toggle small { color: var(--muted); line-height: 1.4; }
+.cloud-sync-status { margin: 9px 0 0; font-size: 12px; color: var(--muted); }
 .file-btn { display: inline-flex; align-items: center; cursor: pointer; }
 .file-btn input { display: none; }
 .mobile-nav { display: none; }

@@ -268,18 +268,21 @@
             </div>
           </section>
           <section class="panel span-two">
-            <div class="panel-head"><div><p class="section-kicker">CLOUD BACKUP</p><h2>Supabase sync</h2></div><span class="status-dot" id="syncDot"></span></div>
-            <p class="setting-help">The app works fully with local storage. Supabase is optional and uses one JSON state row so GitHub Pages can stay simple.</p>
+            <div class="panel-head"><div><p class="section-kicker">CLOUD SYNC</p><h2>Supabase auto-save</h2></div><span class="status-dot" id="syncDot"></span></div>
+            <p class="setting-help">Changes still save to this device immediately. With automatic sync on, Household also saves them to Supabase and checks for newer cloud data when the app opens or comes back into focus.</p>
             <div class="form-grid two-col">
               <label>Supabase project URL<input id="supabaseUrl" type="url" placeholder="https://your-project.supabase.co" /></label>
               <label>Publishable / anon key<input id="supabaseKey" type="password" placeholder="sb_publishable_…" /></label>
               <label>Household sync ID<input id="syncId" type="text" placeholder="mak-household" /></label>
             </div>
+            <label class="sync-toggle"><input id="autoSyncEnabled" type="checkbox" checked /><span><strong>Automatically sync changes</strong><small>Local saves are immediate; cloud saves are lightly delayed so several quick edits become one sync.</small></span></label>
+            <p class="cloud-sync-status" id="cloudSyncStatus" aria-live="polite">Cloud sync not checked yet</p>
             <div class="button-row">
               <button class="secondary-btn" id="saveSettingsBtn">Save settings</button>
-              <button class="secondary-btn" id="pushCloudBtn">↑ Push backup</button>
-              <button class="secondary-btn" id="pullCloudBtn">↓ Pull backup</button>
+              <button class="secondary-btn" id="pushCloudBtn">↑ Push now</button>
+              <button class="secondary-btn" id="pullCloudBtn">↓ Pull now</button>
             </div>
+            <p class="tiny-text">Push/Pull stay available as recovery controls. If two devices both change while disconnected from each other, automatic sync pauses instead of silently overwriting one of them.</p>
             <p class="tiny-text">See <strong>SUPABASE_SETUP.md</strong> in the project for the one-time table setup.</p>
           </section>
           <section class="panel span-two danger-lite">

@@ -2,6 +2,14 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.27
+- Added optional **automatic Supabase sync**. Every app change still saves to localStorage immediately, then cloud save is debounced briefly so several quick edits become one write.
+- Household now checks Supabase when the app opens, regains focus, comes back online, or returns from the background. If the cloud changed and this device did not, the newer cloud state loads automatically.
+- Added safe cross-device conflict handling: if both local and cloud changed since the last successful sync, auto-sync pauses and asks for a one-time manual **Push now** or **Pull now** instead of silently overwriting either copy.
+- Existing Push/Pull controls remain as recovery/manual override controls, and Settings now shows live sync status.
+- Added a one-time safe bootstrap for existing installs: if an upgraded device's local state differs from the existing cloud row and there is no prior v1.27 sync marker, Household will not guess which copy is correct. Push or Pull once, then automatic sync takes over.
+- Bumped stored state schema to `2.5` and PWA cache to `household-v1-27`.
+
 ## v1.26
 - Removed chore ownership/assignment from the visible app. Chores are household tasks rather than Mak / Ty / Either responsibilities.
 - Removed person selection from recurring chores, one-off chores, replanning, batch editing, filters, Settings, and completion logging/editing. Existing legacy assignee fields remain harmlessly compatible with older backups but no longer affect behavior.
