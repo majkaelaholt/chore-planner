@@ -1,6 +1,7 @@
 (() => {
   const STORAGE_KEY = 'householdChorePlanner.v1';
   const SYNC_META_KEY = 'householdChorePlanner.syncMeta.v1';
+  const DEVICE_META_KEY = 'householdChorePlanner.device.v1';
   const CATEGORIES = ['Cleaning','Laundry','Pets','Maintenance / Routine','Deep Clean'];
   const CATEGORY_EMOJI = {
     'Cleaning':'🧽','Laundry':'🧺','Pets':'🐾','Maintenance / Routine':'🔧','Deep Clean':'✨'
@@ -19,13 +20,17 @@
   let overviewShowAll = false;
   let toastTimer;
   let autoCloudTimer = null;
+  let cloudRetryTimer = null;
+  let cloudPollTimer = null;
   let cloudSyncReady = false;
   let cloudSyncBusy = false;
   let cloudSyncInitDone = false;
+  let cloudRetryCount = 0;
   let cloudStatusText = 'Cloud sync not checked yet';
+  let cloudStatusKind = 'idle';
 
   const starter = () => ({
-    version: 2.5,
+    version: 2.6,
     settings: {
       grace: { essential: 1, regular: 2, low: 4 },
       supabaseUrl: '', supabaseKey: '', syncId: 'mak-household', autoSync: true
@@ -100,23 +105,25 @@
   }
 
   function normalizeState(s) {
+    const source={...(s||{})};
+    delete source.__sync;
     const base = starter();
-    const chores = Array.isArray(s.chores) ? s.chores.map(normalizeChore) : base.chores;
-    const instances = normalizeInstancesForVersion(s.instances,s.version,chores);
-    const history = normalizeHistoryRows(s.history,instances);
-    const settings={...base.settings, ...(s.settings||{}), grace:{...base.settings.grace, ...((s.settings||{}).grace||{})}};
+    const chores = Array.isArray(source.chores) ? source.chores.map(normalizeChore) : base.chores;
+    const instances = normalizeInstancesForVersion(source.instances,source.version,chores);
+    const history = normalizeHistoryRows(source.history,instances);
+    const settings={...base.settings, ...(source.settings||{}), grace:{...base.settings.grace, ...((source.settings||{}).grace||{})}};
     // v2.4 retired person/ownership settings. Drop legacy names when old backups
     // are normalized so future exports stay household-focused too.
     delete settings.people;
     return {
       ...base,
-      ...s,
+      ...source,
       settings,
-      version: 2.5,
+      version: 2.6,
       chores,
       instances,
       history,
-      customDefault: normalizeDefaultSnapshot(s.customDefault,s.version)
+      customDefault: normalizeDefaultSnapshot(source.customDefault,source.version)
     };
   }
 
@@ -251,6 +258,35 @@
   function writeSyncMeta(patch={}){
     const next={...loadSyncMeta(),...patch};
     localStorage.setItem(SYNC_META_KEY,JSON.stringify(next));
+    refreshSyncIndicators();
+    return next;
+  }
+  function defaultDeviceName(){
+    const ua=navigator.userAgent||'';
+    if(/iPhone/i.test(ua))return 'iPhone';
+    if(/iPad/i.test(ua))return 'iPad';
+    if(/Android/i.test(ua))return 'Android';
+    if(/Macintosh|Mac OS X/i.test(ua))return 'Mac';
+    if(/Windows/i.test(ua))return 'Windows PC';
+    return 'This device';
+  }
+  function loadDeviceMeta(){
+    try{
+      const existing=JSON.parse(localStorage.getItem(DEVICE_META_KEY)||'{}')||{};
+      if(existing.id){
+        const fixed={...existing,name:(existing.name||defaultDeviceName()).trim()||defaultDeviceName()};
+        if(fixed.name!==existing.name)localStorage.setItem(DEVICE_META_KEY,JSON.stringify(fixed));
+        return fixed;
+      }
+    }catch{}
+    const created={id:uid('device'),name:defaultDeviceName(),createdAt:new Date().toISOString()};
+    localStorage.setItem(DEVICE_META_KEY,JSON.stringify(created));
+    return created;
+  }
+  function saveDeviceName(name){
+    const current=loadDeviceMeta();
+    const next={...current,name:(name||'').trim()||defaultDeviceName()};
+    localStorage.setItem(DEVICE_META_KEY,JSON.stringify(next));
     return next;
   }
   function stableStringify(value){
@@ -265,22 +301,97 @@
   }
   function cloudPayloadFor(inputState=state){
     const payload=JSON.parse(JSON.stringify(inputState));
+    delete payload.__sync;
     payload.settings=payload.settings||{};
     payload.settings.supabaseKey='';
     return payload;
   }
+  function cloudUserState(rawState){
+    const copy=JSON.parse(JSON.stringify(rawState||{}));
+    delete copy.__sync;
+    return copy;
+  }
+  function cloudRevisionInfo(rawState){
+    const info=rawState?.__sync||{};
+    return {
+      revision:Math.max(0,Number(info.revision)||0),
+      writerId:String(info.writerId||''),
+      writerName:String(info.writerName||''),
+      writtenAt:String(info.writtenAt||'')
+    };
+  }
   function stateFingerprint(inputState=state){return simpleHash(stableStringify(cloudPayloadFor(inputState)));}
   function hasCloudConfig(){return Boolean((state.settings.supabaseUrl||'').trim()&&(state.settings.supabaseKey||'').trim());}
+  function formatSyncClock(value){
+    if(!value)return '';
+    const d=new Date(value);if(Number.isNaN(d.getTime()))return '';
+    return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+  }
+  function formatSyncAge(value){
+    if(!value)return '';
+    const d=new Date(value);if(Number.isNaN(d.getTime()))return '';
+    const diff=Math.max(0,Date.now()-d.getTime());
+    if(diff<45000)return 'just now';
+    if(diff<3600000)return `${Math.max(1,Math.round(diff/60000))}m ago`;
+    return formatSyncClock(value);
+  }
+  function refreshSyncIndicators(kind=cloudStatusKind){
+    const meta=loadSyncMeta();
+    const mobile=document.getElementById('mobileSyncStatus');
+    const mobileDot=document.getElementById('mobileSyncDot');
+    const detail=document.getElementById('cloudSyncDetails');
+    const last=meta.lastSyncedAt||meta.lastCloudUpdatedAt||'';
+    const pending=hasCloudConfig()&&hasPendingLocalChanges();
+    let mobileText='Saved locally';
+    if(!hasCloudConfig())mobileText='Cloud sync not set up';
+    else if(kind==='conflict'||kind==='error')mobileText='Sync needs attention';
+    else if(kind==='syncing'||pending)mobileText='Saving…';
+    else if(last)mobileText=`Synced • ${formatSyncClock(last)}`;
+    else mobileText='Cloud sync ready';
+    if(mobile)mobile.textContent=mobileText;
+    if(mobileDot){
+      mobileDot.classList.toggle('connected',hasCloudConfig()&&!pending&&kind!=='error'&&kind!=='conflict');
+      mobileDot.classList.toggle('syncing',kind==='syncing'||pending);
+      mobileDot.classList.toggle('error',kind==='error'||kind==='conflict');
+    }
+    if(detail){
+      const bits=[];
+      if(last)bits.push(`Last synced ${formatSyncAge(last)}`);
+      if(Number.isFinite(Number(meta.lastSeenRevision)))bits.push(`cloud revision ${Number(meta.lastSeenRevision)||0}`);
+      if(meta.lastWriterName)bits.push(`last changed by ${meta.lastWriterName}`);
+      detail.textContent=bits.join(' • ')||'No successful cloud sync recorded on this device yet.';
+    }
+  }
   function setCloudStatus(text,kind='idle'){
     cloudStatusText=text;
+    cloudStatusKind=kind;
     const el=document.getElementById('cloudSyncStatus');if(el)el.textContent=text;
     const dot=document.getElementById('syncDot');
     if(dot){dot.classList.toggle('connected',hasCloudConfig());dot.classList.toggle('syncing',kind==='syncing');dot.classList.toggle('error',kind==='error'||kind==='conflict');}
+    refreshSyncIndicators(kind);
   }
   function updateSidebarSavedStatus(cloud=false){
     const status=document.getElementById('sidebarStatus');if(!status)return;
-    const time=new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
-    status.textContent=cloud?`Saved to cloud • ${time}`:`Saved locally • ${time}`;
+    const meta=loadSyncMeta();
+    const time=cloud?formatSyncClock(meta.lastSyncedAt||meta.lastCloudUpdatedAt):new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+    status.textContent=cloud?`Synced to cloud • ${time||'just now'}`:`Saved locally • ${time}`;
+    refreshSyncIndicators(cloud?'connected':(cloudStatusKind==='conflict'||cloudStatusKind==='error'?cloudStatusKind:'syncing'));
+  }
+  function hasPendingLocalChanges(){
+    const meta=loadSyncMeta();
+    return !meta.lastSyncedHash||stateFingerprint(state)!==meta.lastSyncedHash;
+  }
+  function clearCloudRetry(){
+    clearTimeout(cloudRetryTimer);cloudRetryTimer=null;cloudRetryCount=0;
+  }
+  function scheduleCloudRetry(){
+    if(state.settings.autoSync===false||!hasCloudConfig()||!cloudSyncReady||!hasPendingLocalChanges())return;
+    clearTimeout(cloudRetryTimer);
+    const delays=[3000,8000,20000,45000,90000];
+    const delay=delays[Math.min(cloudRetryCount,delays.length-1)];
+    cloudRetryCount=Math.min(cloudRetryCount+1,delays.length-1);
+    setCloudStatus(`Cloud save failed — retrying in ${Math.round(delay/1000)}s…`,'error');
+    cloudRetryTimer=setTimeout(()=>{cloudRetryTimer=null;scheduleAutoCloudSave(0);},delay);
   }
   function saveState(message='Saved',options={}) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -288,11 +399,19 @@
     if (message) toast(message);
     if(!options.skipCloud)scheduleAutoCloudSave();
   }
-  function scheduleAutoCloudSave(){
-    if(!cloudSyncReady||cloudSyncBusy||state.settings.autoSync===false||!hasCloudConfig())return;
-    clearTimeout(autoCloudTimer);
+  function scheduleAutoCloudSave(delay=900){
+    if(state.settings.autoSync===false||!hasCloudConfig())return;
+    clearTimeout(autoCloudTimer);autoCloudTimer=null;
+    if(!hasPendingLocalChanges())return;
+    if(cloudRetryTimer){setCloudStatus('Changes queued — waiting for automatic retry…','syncing');return;}
+    if(!cloudSyncReady){setCloudStatus('Local changes waiting for sync…','syncing');return;}
+    if(cloudSyncBusy){setCloudStatus('Changes queued — finishing current sync first…','syncing');return;}
     setCloudStatus('Local change waiting to sync…','syncing');
-    autoCloudTimer=setTimeout(()=>autoPushCloud(),1200);
+    autoCloudTimer=setTimeout(()=>{autoCloudTimer=null;autoPushCloud();},Math.max(0,delay));
+  }
+  function schedulePendingCloudSave(delay=200){
+    if(state.settings.autoSync===false||!hasCloudConfig()||!cloudSyncReady||cloudSyncBusy||cloudRetryTimer)return;
+    if(hasPendingLocalChanges())scheduleAutoCloudSave(delay);
   }
 
   function uid(prefix='id') { return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`; }
@@ -1581,9 +1700,11 @@
   function renderSettings(){
     document.getElementById('graceEssential').value=state.settings.grace.essential;document.getElementById('graceRegular').value=state.settings.grace.regular;document.getElementById('graceLow').value=state.settings.grace.low;
     document.getElementById('supabaseUrl').value=state.settings.supabaseUrl||'';document.getElementById('supabaseKey').value=state.settings.supabaseKey||'';document.getElementById('syncId').value=state.settings.syncId||'mak-household';
+    const deviceName=document.getElementById('deviceName');if(deviceName)deviceName.value=loadDeviceMeta().name;
     const autoSync=document.getElementById('autoSyncEnabled');if(autoSync)autoSync.checked=state.settings.autoSync!==false;
     document.getElementById('syncDot').classList.toggle('connected',!!(state.settings.supabaseUrl&&state.settings.supabaseKey));
     const cloudStatus=document.getElementById('cloudSyncStatus');if(cloudStatus)cloudStatus.textContent=cloudStatusText;
+    refreshSyncIndicators();
     const defaultStatus=document.getElementById('customDefaultStatus');
     if(defaultStatus){
       if(state.customDefault?.savedAt){const d=new Date(state.customDefault.savedAt);defaultStatus.textContent=`Custom default saved ${d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})} • ${state.customDefault.chores.length} chores`;}
@@ -2008,6 +2129,7 @@
   function saveSettings(options={}){
     state.settings.grace={essential:Number(document.getElementById('graceEssential').value)||0,regular:Number(document.getElementById('graceRegular').value)||0,low:Number(document.getElementById('graceLow').value)||0};
     state.settings.supabaseUrl=document.getElementById('supabaseUrl').value.trim();state.settings.supabaseKey=document.getElementById('supabaseKey').value.trim();state.settings.syncId=document.getElementById('syncId').value.trim()||'mak-household';
+    const deviceName=document.getElementById('deviceName');if(deviceName)saveDeviceName(deviceName.value);
     const autoSync=document.getElementById('autoSyncEnabled');state.settings.autoSync=autoSync?autoSync.checked:true;
     saveState(options.silent?'':'Settings saved',{skipCloud:Boolean(options.skipCloud)});renderAll();
     if(!options.skipInit)initializeAutoSync(true);
@@ -2049,45 +2171,103 @@
     }finally{clearTimeout(timeout);}
   }
 
-  async function fetchCloudRow(){
+  async function fetchCloudRow(options={}){
     const cfg=getCloudConfig();if(!cfg)return null;
     const encoded=encodeURIComponent(cfg.syncId);
-    const result=await cloudFetch(`/rest/v1/household_state?id=eq.${encoded}&select=state,updated_at&limit=1`);
+    const result=await cloudFetch(`/rest/v1/household_state?id=eq.${encoded}&select=state,updated_at&limit=1`,options);
     const row=Array.isArray(result?.body)?result.body[0]:result?.body;
     return {row,cfg};
+  }
+
+  function syncMetaForRow(row,cfg,hash){
+    const info=cloudRevisionInfo(row?.state);
+    return writeSyncMeta({
+      lastSyncedHash:hash,
+      lastCloudUpdatedAt:row?.updated_at||new Date().toISOString(),
+      lastSyncedAt:new Date().toISOString(),
+      lastSeenRevision:info.revision,
+      lastWriterId:info.writerId,
+      lastWriterName:info.writerName,
+      syncId:cfg.syncId
+    });
   }
 
   function applyCloudState(row,cfg,message='Cloud changes loaded'){
     if(!row?.state)return false;
     const creds={supabaseUrl:cfg.supabaseUrl,supabaseKey:cfg.supabaseKey,syncId:cfg.syncId};
-    state=normalizeState(row.state);Object.assign(state.settings,creds);
+    state=normalizeState(cloudUserState(row.state));Object.assign(state.settings,creds);
     localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
     const fp=stateFingerprint(state);
-    writeSyncMeta({lastSyncedHash:fp,lastCloudUpdatedAt:row.updated_at||new Date().toISOString(),syncId:cfg.syncId});
+    syncMetaForRow(row,cfg,fp);
+    clearCloudRetry();
     cloudSyncReady=state.settings.autoSync!==false;
-    setCloudStatus(`Synced • ${new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`,'connected');
+    setCloudStatus(`Synced • ${formatSyncClock(new Date())}`,'connected');
     updateSidebarSavedStatus(true);
     renderAll();
     if(message)toast(message);
     return true;
   }
 
+  function syncRaceError(message='Cloud changed before this device could save'){
+    const error=new Error(message);error.code='SYNC_RACE';return error;
+  }
+
   async function writeCloudState(options={}){
     const cfg=getCloudConfig();if(!cfg)return null;
-    const payload=cloudPayloadFor(state);
-    const result=await cloudFetch('/rest/v1/household_state?on_conflict=id&select=id,updated_at,state',{
-      method:'POST',
-      keepalive:Boolean(options.keepalive),
-      headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},
-      body:JSON.stringify({id:cfg.syncId,state:payload,updated_at:new Date().toISOString()})
-    });
+    const userPayload=cloudPayloadFor(state);
+    const payloadHash=simpleHash(stableStringify(userPayload));
+    const device=loadDeviceMeta();
+    const expectedRow=options.expectedRow||null;
+    const previous=cloudRevisionInfo(expectedRow?.state);
+    const nextRevision=previous.revision+1;
+    const updatedAt=new Date().toISOString();
+    const payload={...userPayload,__sync:{revision:nextRevision,writerId:device.id,writerName:device.name,writtenAt:updatedAt}};
+    let result;
+
+    if(options.force){
+      result=await cloudFetch('/rest/v1/household_state?on_conflict=id&select=id,updated_at,state',{
+        method:'POST',
+        keepalive:Boolean(options.keepalive),
+        headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},
+        body:JSON.stringify({id:cfg.syncId,state:payload,updated_at:updatedAt})
+      });
+    }else if(expectedRow?.updated_at){
+      const id=encodeURIComponent(cfg.syncId);
+      const seenAt=encodeURIComponent(expectedRow.updated_at);
+      result=await cloudFetch(`/rest/v1/household_state?id=eq.${id}&updated_at=eq.${seenAt}&select=id,updated_at,state`,{
+        method:'PATCH',
+        keepalive:Boolean(options.keepalive),
+        headers:{'Content-Type':'application/json','Prefer':'return=representation'},
+        body:JSON.stringify({state:payload,updated_at:updatedAt})
+      });
+      const rows=Array.isArray(result?.body)?result.body:(result?.body?[result.body]:[]);
+      if(!rows.length)throw syncRaceError();
+    }else{
+      try{
+        result=await cloudFetch('/rest/v1/household_state?select=id,updated_at,state',{
+          method:'POST',
+          keepalive:Boolean(options.keepalive),
+          headers:{'Content-Type':'application/json','Prefer':'return=representation'},
+          body:JSON.stringify({id:cfg.syncId,state:payload,updated_at:updatedAt})
+        });
+      }catch(error){
+        if(/duplicate|unique|409/i.test(error?.message||''))throw syncRaceError();
+        throw error;
+      }
+    }
+
     const row=Array.isArray(result?.body)?result.body[0]:result?.body;
     if(!row?.id)throw new Error(`Cloud backup could not be verified for “${cfg.syncId}”`);
-    const fp=stateFingerprint(state);
-    writeSyncMeta({lastSyncedHash:fp,lastCloudUpdatedAt:row.updated_at||new Date().toISOString(),syncId:cfg.syncId});
+    syncMetaForRow(row,cfg,payloadHash);
     cloudSyncReady=state.settings.autoSync!==false;
-    setCloudStatus(`Synced • ${new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`,'connected');
-    updateSidebarSavedStatus(true);
+    clearCloudRetry();
+    if(stateFingerprint(state)!==payloadHash){
+      setCloudStatus('Newer local changes queued…','syncing');
+      updateSidebarSavedStatus(false);
+    }else{
+      setCloudStatus(`Synced • ${formatSyncClock(new Date())}`,'connected');
+      updateSidebarSavedStatus(true);
+    }
     return row;
   }
 
@@ -2095,9 +2275,13 @@
     saveSettings({skipCloud:true,skipInit:true,silent:true});
     if(!getCloudConfig())return;
     cloudSyncBusy=true;clearTimeout(autoCloudTimer);setCloudStatus('Saving to cloud…','syncing');
-    try{await writeCloudState();toast('Cloud backup saved');}
+    try{
+      const {row}=await fetchCloudRow();
+      await writeCloudState({expectedRow:row||null,force:true});
+      toast('Cloud backup saved');
+    }
     catch(error){console.error(error);setCloudStatus(`Cloud save failed • ${error.message}`,'error');toast(`Cloud backup failed: ${error.message}`);}
-    finally{cloudSyncBusy=false;cloudSyncInitDone=true;}
+    finally{cloudSyncBusy=false;cloudSyncInitDone=true;schedulePendingCloudSave();}
   }
 
   async function pullCloud(){
@@ -2109,70 +2293,170 @@
       if(!row?.state){setCloudStatus('No cloud backup found','error');toast(`No cloud backup found for “${cfg.syncId}”`);return;}
       applyCloudState(row,cfg,'Cloud backup restored');
     }catch(error){console.error(error);setCloudStatus(`Cloud restore failed • ${error.message}`,'error');toast(`Cloud restore failed: ${error.message}`);}
-    finally{cloudSyncBusy=false;cloudSyncInitDone=true;}
+    finally{cloudSyncBusy=false;cloudSyncInitDone=true;schedulePendingCloudSave();}
   }
 
-  async function autoPushCloud(){
-    clearTimeout(autoCloudTimer);
-    if(cloudSyncBusy||!cloudSyncReady||state.settings.autoSync===false||!hasCloudConfig())return;
+  async function autoPushCloud(options={}){
+    clearTimeout(autoCloudTimer);autoCloudTimer=null;
+    if(state.settings.autoSync===false||!hasCloudConfig()||!cloudSyncReady)return;
+    if(cloudSyncBusy){setCloudStatus('Changes queued — finishing current sync first…','syncing');return;}
+    if(!hasPendingLocalChanges())return;
     cloudSyncBusy=true;setCloudStatus('Saving to cloud…','syncing');
+    let race=false;
     try{
       const meta=loadSyncMeta();
+      const device=loadDeviceMeta();
+      const {row,cfg}=await fetchCloudRow({keepalive:Boolean(options.keepalive)});
       const localHash=stateFingerprint(state);
-      const {row,cfg}=await fetchCloudRow();
-      if(row?.state&&meta.lastSyncedHash){
-        const cloudHash=stateFingerprint(normalizeState(row.state));
-        const localChanged=localHash!==meta.lastSyncedHash;
-        const cloudChanged=cloudHash!==meta.lastSyncedHash;
-        if(localChanged&&cloudChanged){
-          cloudSyncReady=false;
-          setCloudStatus('Sync paused — this device and cloud both changed. Choose Push or Pull once.','conflict');
-          toast('Cloud sync paused: choose Push or Pull in Settings');
-          return;
-        }
-        if(!localChanged&&cloudChanged){applyCloudState(row,cfg,'');return;}
-      }
-      await writeCloudState();
-    }catch(error){console.error(error);setCloudStatus(`Auto-save failed • ${error.message}`,'error');}
-    finally{cloudSyncBusy=false;}
-  }
+      if(!row?.state){await writeCloudState({expectedRow:null,keepalive:Boolean(options.keepalive)});return;}
 
-  async function reconcileCloud(){
-    if(cloudSyncBusy||state.settings.autoSync===false||!hasCloudConfig())return;
-    cloudSyncBusy=true;setCloudStatus('Checking cloud…','syncing');
-    try{
-      const {row,cfg}=await fetchCloudRow();
-      if(!row?.state){await writeCloudState();return;}
-      const meta=loadSyncMeta();
-      const localHash=stateFingerprint(state);
-      const cloudNormalized=normalizeState(row.state);
-      const cloudHash=stateFingerprint(cloudNormalized);
+      const cloudState=normalizeState(cloudUserState(row.state));
+      const cloudHash=stateFingerprint(cloudState);
+      const info=cloudRevisionInfo(row.state);
+
+      if(cloudHash===localHash){
+        syncMetaForRow(row,cfg,localHash);
+        clearCloudRetry();cloudSyncReady=true;
+        setCloudStatus(`Synced • ${formatSyncClock(new Date())}`,'connected');
+        updateSidebarSavedStatus(true);
+        return;
+      }
 
       if(!meta.lastSyncedHash||meta.syncId!==cfg.syncId){
-        if(localHash===cloudHash){
-          writeSyncMeta({lastSyncedHash:localHash,lastCloudUpdatedAt:row.updated_at||'',syncId:cfg.syncId});
-          cloudSyncReady=true;setCloudStatus('Auto-sync ready','connected');updateSidebarSavedStatus(true);
-        }else{
-          cloudSyncReady=false;
-          setCloudStatus('One-time choice needed — local and cloud differ. Use Push or Pull below.','conflict');
-        }
+        cloudSyncReady=false;
+        setCloudStatus('One-time choice needed — local and cloud differ. Use Push or Pull below.','conflict');
+        toast('Cloud sync needs one Push or Pull in Settings');
         return;
       }
 
       const localChanged=localHash!==meta.lastSyncedHash;
       const cloudChanged=cloudHash!==meta.lastSyncedHash;
+      const sameWriter=Boolean(info.writerId&&info.writerId===device.id);
+
       if(!localChanged&&cloudChanged){applyCloudState(row,cfg,'');return;}
-      if(localChanged&&!cloudChanged){cloudSyncReady=true;await writeCloudState();return;}
+      if(localChanged&&!cloudChanged){await writeCloudState({expectedRow:row,keepalive:Boolean(options.keepalive)});return;}
+      if(localChanged&&cloudChanged&&sameWriter){
+        // This device successfully wrote an earlier snapshot, then changed again
+        // before its response finished. The cloud revision proves it is our own
+        // prior write, so a conditional follow-up save is safe.
+        await writeCloudState({expectedRow:row,keepalive:Boolean(options.keepalive)});return;
+      }
       if(localChanged&&cloudChanged){
         cloudSyncReady=false;
-        setCloudStatus('Sync paused — this device and cloud both changed. Choose Push or Pull once.','conflict');
+        setCloudStatus(`Sync paused — ${info.writerName||'another device'} changed the cloud while this device also changed locally.`,'conflict');
+        toast('Sync needs attention — both copies changed');
         return;
       }
+
+      syncMetaForRow(row,cfg,cloudHash);
+      cloudSyncReady=true;clearCloudRetry();
+      setCloudStatus(`Synced • ${formatSyncClock(new Date())}`,'connected');updateSidebarSavedStatus(true);
+    }catch(error){
+      console.error(error);
+      if(error?.code==='SYNC_RACE'){
+        race=true;cloudSyncReady=true;
+        setCloudStatus('Cloud changed while saving — checking the newer revision…','syncing');
+      }else{
+        setCloudStatus(`Auto-save failed • ${error.message}`,'error');
+        scheduleCloudRetry();
+      }
+    }
+    finally{
+      cloudSyncBusy=false;
+      if(race)setTimeout(()=>reconcileCloud(),120);
+      else schedulePendingCloudSave();
+    }
+  }
+
+  async function reconcileCloud(){
+    if(cloudSyncBusy||state.settings.autoSync===false||!hasCloudConfig())return;
+    cloudSyncBusy=true;setCloudStatus('Checking cloud…','syncing');
+    let race=false;
+    try{
+      const {row,cfg}=await fetchCloudRow();
+      if(!row?.state){await writeCloudState({expectedRow:null});return;}
+      const meta=loadSyncMeta();
+      const device=loadDeviceMeta();
+      const localHash=stateFingerprint(state);
+      const cloudNormalized=normalizeState(cloudUserState(row.state));
+      const cloudHash=stateFingerprint(cloudNormalized);
+      const info=cloudRevisionInfo(row.state);
+
+      if(localHash===cloudHash){
+        syncMetaForRow(row,cfg,localHash);
+        cloudSyncReady=true;clearCloudRetry();
+        setCloudStatus(`Synced • ${formatSyncClock(new Date())}`,'connected');updateSidebarSavedStatus(true);
+        return;
+      }
+
+      if(!meta.lastSyncedHash||meta.syncId!==cfg.syncId){
+        cloudSyncReady=false;
+        setCloudStatus('One-time choice needed — local and cloud differ. Use Push or Pull below.','conflict');
+        return;
+      }
+
+      const localChanged=localHash!==meta.lastSyncedHash;
+      const cloudChanged=cloudHash!==meta.lastSyncedHash;
+      const sameWriter=Boolean(info.writerId&&info.writerId===device.id);
+
+      if(!localChanged&&cloudChanged){applyCloudState(row,cfg,'');return;}
+      if(localChanged&&!cloudChanged){cloudSyncReady=true;await writeCloudState({expectedRow:row});return;}
+      if(localChanged&&cloudChanged&&sameWriter){cloudSyncReady=true;await writeCloudState({expectedRow:row});return;}
+      if(localChanged&&cloudChanged){
+        cloudSyncReady=false;
+        setCloudStatus(`Sync paused — ${info.writerName||'another device'} and this device both changed independently. Choose Push or Pull once.`,'conflict');
+        return;
+      }
+
       cloudSyncReady=true;
-      writeSyncMeta({lastCloudUpdatedAt:row.updated_at||meta.lastCloudUpdatedAt||'',syncId:cfg.syncId});
-      setCloudStatus('Auto-sync ready','connected');updateSidebarSavedStatus(true);
-    }catch(error){console.error(error);setCloudStatus(`Cloud check failed • ${error.message}`,'error');}
-    finally{cloudSyncBusy=false;cloudSyncInitDone=true;}
+      syncMetaForRow(row,cfg,cloudHash);
+      setCloudStatus(`Synced • ${formatSyncClock(new Date())}`,'connected');updateSidebarSavedStatus(true);
+    }catch(error){
+      console.error(error);
+      if(error?.code==='SYNC_RACE'){
+        race=true;cloudSyncReady=true;setCloudStatus('A newer cloud revision arrived — checking again…','syncing');
+      }else{
+        setCloudStatus(`Cloud check failed • ${error.message}`,'error');scheduleCloudRetry();
+      }
+    }
+    finally{
+      cloudSyncBusy=false;cloudSyncInitDone=true;
+      if(race)setTimeout(()=>reconcileCloud(),120);
+      else schedulePendingCloudSave();
+    }
+  }
+
+  function startCloudPolling(){
+    clearInterval(cloudPollTimer);
+    cloudPollTimer=setInterval(()=>{
+      if(document.visibilityState!=='visible'||cloudSyncBusy||autoCloudTimer||state.settings.autoSync===false||!hasCloudConfig())return;
+      reconcileCloud();
+    },12000);
+  }
+
+  function flushPendingCloudOnHide(){
+    if(state.settings.autoSync===false||!hasCloudConfig()||!cloudSyncReady||cloudSyncBusy||!hasPendingLocalChanges())return;
+    const meta=loadSyncMeta();
+    const cfg=getCloudConfig();
+    if(!cfg||!meta.lastCloudUpdatedAt||meta.syncId!==cfg.syncId)return;
+    const userPayload=cloudPayloadFor(state);
+    const payloadHash=simpleHash(stableStringify(userPayload));
+    const device=loadDeviceMeta();
+    const revision=(Number(meta.lastSeenRevision)||0)+1;
+    const updatedAt=new Date().toISOString();
+    const payload={...userPayload,__sync:{revision,writerId:device.id,writerName:device.name,writtenAt:updatedAt}};
+    const id=encodeURIComponent(cfg.syncId);
+    const seenAt=encodeURIComponent(meta.lastCloudUpdatedAt);
+    void cloudFetch(`/rest/v1/household_state?id=eq.${id}&updated_at=eq.${seenAt}&select=id,updated_at,state`,{
+      method:'PATCH',
+      keepalive:true,
+      headers:{'Content-Type':'application/json','Prefer':'return=representation'},
+      body:JSON.stringify({state:payload,updated_at:updatedAt})
+    }).then(result=>{
+      const row=Array.isArray(result?.body)?result.body[0]:result?.body;
+      if(!row?.id)return;
+      syncMetaForRow(row,cfg,payloadHash);
+    }).catch(()=>{});
   }
 
   async function initializeAutoSync(force=false){
@@ -2267,6 +2551,7 @@
     document.getElementById('saveOneOffBtn').addEventListener('click',e=>{e.preventDefault();addOneOff();});
     document.getElementById('recoveryNudgeBtn').addEventListener('click',openCapacityMode);
     document.getElementById('mobileMoreBtn')?.addEventListener('click',()=>document.getElementById('mobileMoreDialog').showModal());
+    document.getElementById('mobileSyncButton')?.addEventListener('click',()=>switchView('settings'));
     document.getElementById('closeMobileMoreBtn')?.addEventListener('click',()=>document.getElementById('mobileMoreDialog').close());
     document.querySelectorAll('[data-more-view]').forEach(b=>b.addEventListener('click',()=>{document.getElementById('mobileMoreDialog').close();switchView(b.dataset.moreView);}));
     document.querySelectorAll('[data-capacity]').forEach(b=>b.addEventListener('click',()=>{capacityMode=b.dataset.capacity;document.querySelectorAll('[data-capacity]').forEach(x=>x.classList.toggle('active',x===b));renderCapacityPlan();}));
@@ -2282,11 +2567,18 @@
 
   bind(); renderAll();
   initializeAutoSync();
-  window.addEventListener('online',()=>initializeAutoSync(true));
+  startCloudPolling();
+  window.addEventListener('online',()=>{clearCloudRetry();initializeAutoSync(true);schedulePendingCloudSave(0);});
   window.addEventListener('focus',()=>{if(document.visibilityState==='visible')reconcileCloud();});
   document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='visible')reconcileCloud();
-    else if(autoCloudTimer&&cloudSyncReady){clearTimeout(autoCloudTimer);autoCloudTimer=null;autoPushCloud();}
+    if(document.visibilityState==='visible'){
+      reconcileCloud();
+      schedulePendingCloudSave(0);
+    }else{
+      clearTimeout(autoCloudTimer);autoCloudTimer=null;
+      flushPendingCloudOnHide();
+    }
   });
+  window.addEventListener('pagehide',flushPendingCloudOnHide);
   if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{}));
 })();

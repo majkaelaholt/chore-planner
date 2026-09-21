@@ -2,6 +2,27 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.29
+- Upgraded cloud sync for regular use across **three or more devices**. Each cloud state now carries an internal monotonically increasing revision plus the ID/name of the device that wrote it.
+- Automatic writes use an optimistic-concurrency check against the exact cloud row version the device just read. If another device wins the race first, the stale device cannot silently overwrite the newer revision.
+- Faster 12-second foreground reconciliation plus launch/focus/visibility/online checks reduce the window where an open device can remain stale.
+- Added a per-device local name (for example **Work PC**, **Home PC**, **iPhone**) in Settings. The name is not shared as a setting; it is attached only to that device's cloud writes for troubleshooting.
+- Added an always-visible mobile sync pill showing **Synced • time**, **Saving…**, or **Sync needs attention**. Tapping it opens Settings.
+- Settings now shows the last successful sync time, cloud revision, and last writing device.
+- Genuine simultaneous edits are still never silently discarded: if two different devices both changed before reconciling, Household pauses and asks for one manual Push/Pull decision.
+- No Supabase table migration is required; revision metadata lives inside the existing JSON state. Stored state schema bumped to `2.6`; PWA cache bumped to `household-v1-29`.
+
+## v1.28
+- Hardened automatic Supabase sync after finding two race conditions that could make a local edit look synced when it was not.
+- Local edits made while a cloud request is already running are now **queued** instead of being silently skipped.
+- Cloud writes now record the fingerprint of the exact payload that was actually sent. If the state changes during an in-flight request, the newer state remains pending and is automatically sent in a second pass rather than being incorrectly marked synced.
+- Failed automatic saves now retry with backoff instead of waiting for a manual Push or another unrelated app event.
+- Added a 30-second foreground cloud check so another device's changes can arrive even when focus/visibility events are unreliable.
+- Added a best-effort `keepalive` flush when the app is backgrounded/page-hidden, which especially helps iPhone/PWA use when the OS suspends timers quickly.
+- Reconciliation now recognizes when local and cloud data are already identical, preventing a false conflict after a background keepalive write completes without its response handler finishing.
+- Manual Push/Pull remain as recovery controls for genuine two-device conflicts, not as a normal syncing requirement.
+- No state-schema migration is required; PWA cache bumped to `household-v1-28`.
+
 ## v1.27
 - Added optional **automatic Supabase sync**. Every app change still saves to localStorage immediately, then cloud save is debounced briefly so several quick edits become one write.
 - Household now checks Supabase when the app opens, regains focus, comes back online, or returns from the background. If the cloud changed and this device did not, the newer cloud state loads automatically.

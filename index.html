@@ -37,6 +37,10 @@
     </aside>
 
     <main class="main" id="mainContent">
+      <button class="mobile-sync-strip" id="mobileSyncButton" type="button" aria-label="Open sync settings">
+        <span class="mobile-sync-dot" id="mobileSyncDot" aria-hidden="true"></span>
+        <span id="mobileSyncStatus">Cloud sync not checked yet</span>
+      </button>
       <section class="view active" id="view-today" aria-labelledby="todayTitle">
         <div class="page-head today-head">
           <div>
@@ -269,20 +273,22 @@
           </section>
           <section class="panel span-two">
             <div class="panel-head"><div><p class="section-kicker">CLOUD SYNC</p><h2>Supabase auto-save</h2></div><span class="status-dot" id="syncDot"></span></div>
-            <p class="setting-help">Changes still save to this device immediately. With automatic sync on, Household also saves them to Supabase and checks for newer cloud data when the app opens or comes back into focus.</p>
+            <p class="setting-help">Changes save to this device immediately. With automatic sync on, Household queues every cloud change, retries failed saves, checks for newer cloud data while the app is open, and makes a best-effort flush when the app goes into the background.</p>
             <div class="form-grid two-col">
               <label>Supabase project URL<input id="supabaseUrl" type="url" placeholder="https://your-project.supabase.co" /></label>
               <label>Publishable / anon key<input id="supabaseKey" type="password" placeholder="sb_publishable_…" /></label>
               <label>Household sync ID<input id="syncId" type="text" placeholder="mak-household" /></label>
+              <label>This device name<input id="deviceName" type="text" placeholder="Work PC, Home PC, iPhone" /><span class="field-help">Only stored on this device. It helps identify which device last changed the cloud copy.</span></label>
             </div>
-            <label class="sync-toggle"><input id="autoSyncEnabled" type="checkbox" checked /><span><strong>Automatically sync changes</strong><small>Local saves are immediate; cloud saves are lightly delayed so several quick edits become one sync.</small></span></label>
+            <label class="sync-toggle"><input id="autoSyncEnabled" type="checkbox" checked /><span><strong>Automatically sync changes</strong><small>Local saves are immediate. Cloud saves are lightly delayed, queued if another sync is running, and retried automatically if the network hiccups.</small></span></label>
             <p class="cloud-sync-status" id="cloudSyncStatus" aria-live="polite">Cloud sync not checked yet</p>
+            <p class="tiny-text sync-detail" id="cloudSyncDetails">No successful cloud sync recorded on this device yet.</p>
             <div class="button-row">
               <button class="secondary-btn" id="saveSettingsBtn">Save settings</button>
               <button class="secondary-btn" id="pushCloudBtn">↑ Push now</button>
               <button class="secondary-btn" id="pullCloudBtn">↓ Pull now</button>
             </div>
-            <p class="tiny-text">Push/Pull stay available as recovery controls. If two devices both change while disconnected from each other, automatic sync pauses instead of silently overwriting one of them.</p>
+            <p class="tiny-text">Push/Pull stay available as recovery controls, but normal use should not require them. Each cloud write carries a revision number and device ID, and automatic saves use conditional updates so a stale Work PC, Home PC, or iPhone cannot silently overwrite a newer cloud revision.</p>
             <p class="tiny-text">See <strong>SUPABASE_SETUP.md</strong> in the project for the one-time table setup.</p>
           </section>
           <section class="panel span-two danger-lite">
