@@ -2,6 +2,15 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.30
+- Skipped Planner cards are no longer dead ends. Right-click on desktop or press-and-hold on mobile to **Undo skip / restore cycle** or **Edit chore setup**.
+- Undoing a skip removes that skipped History entry, restores the occurrence to the active schedule, and recalculates the chore's skip/satisfied markers so the recurrence does not stay artificially advanced.
+- History is now actionable instead of read-only. Each editable row has a visible **Edit** button; right-click and press-and-hold work too.
+- Completed History entries open **Edit completion** plus **Edit chore setup**. Skipped History entries open **Undo skip / restore cycle** plus **Edit chore setup**.
+- Older History rows whose original occurrence is no longer stored still open the chore editor when the underlying chore exists; orphaned history remains safely read-only.
+- Covered-by-later-completion rows cannot be restored as separate chore debt, but their chore setup can still be edited.
+- PWA cache bumped to `household-v1-30`; no Supabase or state-schema migration is required.
+
 ## v1.29
 - Upgraded cloud sync for regular use across **three or more devices**. Each cloud state now carries an internal monotonically increasing revision plus the ID/name of the device that wrote it.
 - Automatic writes use an optimistic-concurrency check against the exact cloud row version the device just read. If another device wins the race first, the stale device cannot silently overwrite the newer revision.

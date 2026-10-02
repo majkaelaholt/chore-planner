@@ -816,6 +816,10 @@
       skippedAt:now.toISOString(),originallyDue:cycleDue,plannedFor:plan
     });
     if(chore){
+      const previousLastCompleted=chore.lastCompleted||null;
+      const previousLastDueSatisfied=chore.lastDueSatisfied||null;
+      const previousLastSkippedDue=chore.lastSkippedDue||null;
+      const previousLastRolledDue=chore.lastRolledDue||null;
       const behavior=effectiveScheduleBehavior(chore);
       if((chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'){
         // A skipped completion-based cycle advances from the routine target,
@@ -827,6 +831,63 @@
       chore.nextDueOverride=null;
     }
     if(!silent){saveState('Skipped this cycle');renderAll();}
+  }
+
+
+  function restoreSkippedInstance(id){
+    const i=instanceById(id);if(!i||!i.skipped||i.cancelled)return false;
+    if(i.skipSource==='covered-by-completion'){
+      toast('This older cycle was covered by a later completion, so there is nothing separate to restore.');
+      return false;
+    }
+    const chore=choreById(i.choreId);
+    const historyRow=state.history.find(h=>h.instanceId===i.id&&(h.action==='skipped'||(!h.completedAt&&h.skippedAt)));
+    const plan=historyRow?.plannedFor||planDateOf(i)||i.originalDue||toISO(today());
+    const cycleDue=historyRow?.originallyDue||i.originalDue||plan;
+    const laterCompletion=i.choreId&&state.instances.some(x=>x.id!==i.id&&x.choreId===i.choreId&&x.completed&&!x.cancelled&&completionDateOf(x)&&completionDateOf(x)>cycleDue);
+    if(laterCompletion&&!confirm(`A later completion of “${i.name}” already exists. Restoring this older skipped cycle may make it appear due again. Restore it anyway?`))return false;
+
+    i.skipped=false;
+    i.skippedAt=null;
+    i.skipSource=null;
+    i.cancelled=false;
+    i.rolledForward=false;
+    i.rolledAt=null;
+    i.rollReason=null;
+    state.history=state.history.filter(h=>!(h.instanceId===i.id&&(h.action==='skipped'||(!h.completedAt&&h.skippedAt))));
+
+    if(chore){
+      const behavior=effectiveScheduleBehavior(chore);
+      if((chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'){
+        // Skipping a flexible occurrence may have temporarily re-anchored later
+        // plans to the routine target. Undo that assumption so the restored
+        // occurrence once again anchors from its current planned day.
+        rebaseFuturePlansAfterAssumptionChange(chore,i,cycleDue,plan,'restore-skip');
+      }
+      const same=state.instances.filter(x=>x.choreId===chore.id);
+      const skippedDates=same.filter(x=>x.skipped).map(x=>x.originalDue||planDateOf(x));
+      if(previousLastSkippedDue&&previousLastSkippedDue!==cycleDue)skippedDates.push(previousLastSkippedDue);
+      chore.lastSkippedDue=maxISO(...skippedDates);
+      const rolledDates=same.filter(x=>x.rolledForward).map(x=>x.originalDue||planDateOf(x));
+      if(previousLastRolledDue)rolledDates.push(previousLastRolledDue);
+      chore.lastRolledDue=maxISO(...rolledDates);
+      const satisfied=[];
+      if(previousLastDueSatisfied&&previousLastDueSatisfied!==cycleDue)satisfied.push(previousLastDueSatisfied);
+      same.forEach(x=>{
+        if(x.completed||x.skipped||x.rolledForward)satisfied.push(x.originalDue||planDateOf(x));
+      });
+      state.history.filter(h=>h.choreId===chore.id).forEach(h=>{
+        if(h.completedAt||h.action==='skipped')satisfied.push(h.originallyDue||h.plannedFor);
+      });
+      chore.lastDueSatisfied=maxISO(...satisfied);
+      const completedDates=[];
+      if(previousLastCompleted)completedDates.push(previousLastCompleted);
+      same.filter(x=>x.completed&&!x.cancelled).forEach(x=>completedDates.push(completionDateOf(x)));
+      state.history.filter(h=>h.choreId===chore.id&&h.completedAt&&h.action!=='skipped').forEach(h=>completedDates.push(h.completedDate||(h.completedAt?localDateFromTimestamp(h.completedAt):null)));
+      chore.lastCompleted=maxISO(...completedDates);
+      chore.nextDueOverride=null;
+    }
+    saveState('Skip undone — cycle restored');renderAll();return true;
   }
 
   function canUnplanInstance(i){
@@ -1279,8 +1340,8 @@
       if(item.historicalSeed||item.skipped||item.completed){
         btn.addEventListener('click',e=>{e.stopPropagation();if(item.historicalSeed)openChore(item.choreId);else if(item.skipped)toast(item.skipSource==='covered-by-completion'?'Covered by a later completion — no duplicate catch-up needed':'Skipped this cycle — the next occurrence remains on the schedule');else toast('Completed');});
       }
-      btn.addEventListener('contextmenu',e=>{if(item.historicalSeed||item.skipped)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
-      if(!item.historicalSeed&&!item.skipped)addPlannerLongPress(btn,()=>openPlannerQuickMenu(item.id));
+      btn.addEventListener('contextmenu',e=>{if(item.historicalSeed)return;e.preventDefault();e.stopPropagation();openPlannerQuickMenu(item.id,null,{x:e.clientX,y:e.clientY});});
+      if(!item.historicalSeed)addPlannerLongPress(btn,()=>openPlannerQuickMenu(item.id));
     }
     return btn;
   }
@@ -1413,6 +1474,8 @@
       actions.push(['skip','⏭ Skip this cycle']);
     }else if(i.completed&&!i.historicalSeed){
       actions.push(['edit-completion','✎ Edit completion']);
+    }else if(i.skipped&&!i.historicalSeed&&i.skipSource!=='covered-by-completion'){
+      actions.push(['restore-skip','↩ Undo skip / restore cycle']);
     }
     if(i.choreId)actions.push(['edit','⚙ Edit chore setup']);
     menu.innerHTML=`<div class="planner-quick-title">${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div>${actions.map(([key,label])=>`<button type="button" data-action="${key}" role="menuitem">${label}</button>`).join('')}<button type="button" class="planner-quick-cancel" data-action="close">Cancel</button>`;
@@ -1424,6 +1487,9 @@
       else if(action==='done-date')openComplete(id,true);
       else if(action==='move')openMove(id);
       else if(action==='edit-completion')openEditCompletion(id);
+      else if(action==='restore-skip'){
+        if(confirm(`Restore “${i.name}” to the active schedule? This removes the skipped History entry.`))restoreSkippedInstance(id);
+      }
       else if(action==='unplan')unplanInstance(id);
       else if(action==='skip'){
         const chore=choreById(i.choreId);const word=chore?routineDateWord(chore,true):'planned';
@@ -1450,8 +1516,8 @@
     const meta=i.historicalSeed?'Previously done':i.skipped?(i.skipSource==='covered-by-completion'?'Covered by later completion':'Skipped this cycle'):i.completed?'Completed':`${effortText} effort`;
     el.innerHTML=`<div class="planner-card-title">${i.pinned?'📌 ':''}${CATEGORY_EMOJI[i.category]||'•'} ${esc(i.name)}</div><div class="planner-card-meta"><span class="effort-dot">${esc(meta)}</span></div>${timing}`;
     el.addEventListener('dragstart',e=>{if(!i.historicalSeed&&!i.skipped)e.dataTransfer.setData('text/plain',i.id);});
-    el.addEventListener('contextmenu',e=>{if(i.historicalSeed||i.skipped)return;e.preventDefault();openPlannerQuickMenu(i.id,null,{x:e.clientX,y:e.clientY});});
-    if(!i.historicalSeed&&!i.skipped)addPlannerLongPress(el,()=>openPlannerQuickMenu(i.id));
+    el.addEventListener('contextmenu',e=>{if(i.historicalSeed)return;e.preventDefault();openPlannerQuickMenu(i.id,null,{x:e.clientX,y:e.clientY});});
+    if(!i.historicalSeed)addPlannerLongPress(el,()=>openPlannerQuickMenu(i.id));
     el.addEventListener('dblclick',()=>{if(!i.completed&&!i.skipped)openComplete(i.id);});
     return el;
   }
@@ -1689,12 +1755,35 @@
     selectedChoreIds.clear();saveState(`${count} chore${count===1?'':'s'} deleted`);renderAll();
   }
 
+  function openHistoryActions(historyId,anchor=null,point=null){
+    const h=state.history.find(x=>x.id===historyId);if(!h)return;
+    const i=h.instanceId?instanceById(h.instanceId):null;
+    if(i){openPlannerQuickMenu(i.id,anchor,point);return;}
+    const chore=h.choreId?choreById(h.choreId):null;
+    if(chore){openChore(chore.id);return;}
+    toast('This history record belongs to a chore that no longer exists.');
+  }
+
   function renderHistory(){
     const list=document.getElementById('historyList');list.innerHTML='';
     const stamp=h=>h.completedAt||h.skippedAt||'';
     const rows=state.history.slice().sort((a,b)=>stamp(b).localeCompare(stamp(a)));
     if(!rows.length){list.innerHTML='<div class="empty-state"><div class="empty-illustration">✓</div><h3>No history yet</h3><p>Completed and intentionally skipped chore cycles will show up here.</p></div>';return;}
-    rows.forEach(h=>{const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);const d=new Date(stamp(h));const timeLine=!skipped&&h.completedTimeKnown===false?'':`<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`;const row=document.createElement('div');row.className='history-row';row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}${timeLine}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}${!skipped&&h.completedTimeKnown===false?' <span class="badge">Logged later</span>':''}</div><div class="history-who">${skipped?'Intentional':'Completed'}</div>`;list.appendChild(row);});
+    rows.forEach(h=>{
+      const skipped=h.action==='skipped'||(!h.completedAt&&h.skippedAt);
+      const d=new Date(stamp(h));
+      const timeLine=!skipped&&h.completedTimeKnown===false?'':`<br>${d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`;
+      const row=document.createElement('div');row.className='history-row';row.dataset.historyId=h.id;
+      const canEdit=Boolean((h.instanceId&&instanceById(h.instanceId))||(h.choreId&&choreById(h.choreId)));
+      row.innerHTML=`<div class="history-date">${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}${timeLine}</div><div class="history-name">${CATEGORY_EMOJI[h.category]||'✓'} ${esc(h.name)}${skipped?' <span class="badge skipped">Skipped cycle</span>':''}${!skipped&&h.completedTimeKnown===false?' <span class="badge">Logged later</span>':''}</div><div class="history-actions"><span class="history-status">${skipped?'Intentional':'Completed'}</span>${canEdit?'<button type="button" class="history-edit-btn">Edit</button>':''}</div>`;
+      const edit=row.querySelector('.history-edit-btn');
+      if(edit)edit.addEventListener('click',e=>{e.stopPropagation();openHistoryActions(h.id,edit);});
+      if(canEdit){
+        row.addEventListener('contextmenu',e=>{e.preventDefault();openHistoryActions(h.id,null,{x:e.clientX,y:e.clientY});});
+        addPlannerLongPress(row,()=>openHistoryActions(h.id,row));
+      }
+      list.appendChild(row);
+    });
   }
 
   function renderSettings(){
