@@ -816,10 +816,6 @@
       skippedAt:now.toISOString(),originallyDue:cycleDue,plannedFor:plan
     });
     if(chore){
-      const previousLastCompleted=chore.lastCompleted||null;
-      const previousLastDueSatisfied=chore.lastDueSatisfied||null;
-      const previousLastSkippedDue=chore.lastSkippedDue||null;
-      const previousLastRolledDue=chore.lastRolledDue||null;
       const behavior=effectiveScheduleBehavior(chore);
       if((chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'){
         // A skipped completion-based cycle advances from the routine target,
@@ -841,6 +837,14 @@
       return false;
     }
     const chore=choreById(i.choreId);
+    // Capture the chore-level bookkeeping BEFORE clearing this skip. These
+    // values used to be declared inside skipInstance(), which meant Undo skip
+    // mutated the occurrence and then threw a ReferenceError before save/render.
+    // The stale DOM therefore still looked skipped and remained non-draggable.
+    const previousLastCompleted=chore?.lastCompleted||null;
+    const previousLastDueSatisfied=chore?.lastDueSatisfied||null;
+    const previousLastSkippedDue=chore?.lastSkippedDue||null;
+    const previousLastRolledDue=chore?.lastRolledDue||null;
     const historyRow=state.history.find(h=>h.instanceId===i.id&&(h.action==='skipped'||(!h.completedAt&&h.skippedAt)));
     const plan=historyRow?.plannedFor||planDateOf(i)||i.originalDue||toISO(today());
     const cycleDue=historyRow?.originallyDue||i.originalDue||plan;

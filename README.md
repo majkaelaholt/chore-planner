@@ -2,6 +2,13 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.31
+- Fixed **Undo skip / restore cycle** so it completes cleanly instead of throwing after partially changing the skipped occurrence.
+- Restored planner cards now immediately lose their skipped styling and become normal active cards again.
+- Restored active cards are draggable/re-plannable again in Week view, and their right-click / long-hold menu returns to the normal active actions.
+- The skipped History entry is removed and the chore-level skip/satisfied bookkeeping is recalculated before saving, so the fix persists after reload and across Supabase sync.
+- PWA cache bumped to `household-v1-31`; no Supabase or state-schema migration is required.
+
 ## v1.30
 - Skipped Planner cards are no longer dead ends. Right-click on desktop or press-and-hold on mobile to **Undo skip / restore cycle** or **Edit chore setup**.
 - Undoing a skip removes that skipped History entry, restores the occurrence to the active schedule, and recalculates the chore's skip/satisfied markers so the recurrence does not stay artificially advanced.
