@@ -433,7 +433,7 @@
   function addDays(d,n) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
   function daysBetween(a,b) { return Math.round((parseDateish(b)-parseDateish(a))/dayMs); }
   function parseDateish(x) { if (x instanceof Date) { const d=new Date(x); d.setHours(0,0,0,0); return d; } return parseISO(x); }
-  function startOfWeek(d) { const x=new Date(d); x.setHours(0,0,0,0); return addDays(x,-x.getDay()); }
+  function startOfWeek(d) { const x=new Date(d); x.setHours(0,0,0,0); const mondayOffset=(x.getDay()+6)%7; return addDays(x,-mondayOffset); }
   function endOfWeek(d) { return addDays(startOfWeek(d),6); }
   function sameDate(a,b) { return toISO(parseDateish(a))===toISO(parseDateish(b)); }
   function formatShort(d) { return parseDateish(d).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
@@ -1356,7 +1356,7 @@
     board.innerHTML='';
     const gridStart=period.gridStart,gridEnd=period.gridEnd;
     const forecast=plannerForecastMap(toISO(gridStart),toISO(gridEnd));
-    const weekdays=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const weekdays=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
     weekdays.forEach(day=>{const h=document.createElement('div');h.className='calendar-weekday';h.textContent=day;board.appendChild(h);});
     let date=new Date(gridStart);
     while(date<=gridEnd){
@@ -1398,7 +1398,7 @@
     if(plannerViewMode==='week'){
       title.textContent='Weekly Planner';eyebrow.textContent='WEEKLY PLAN';subtitle.textContent='Routine dates are targets unless they are truly fixed. Planned is your intention; completed is what actually happened.';
       label.textContent=`${formatShort(ws)} – ${formatShort(endOfWeek(ws))}`;
-      note.innerHTML='<strong>Flexible plan:</strong> outlined chores are forecasts; solid chores are your current plan. A target day gives structure, not a contract. Right-click a card on desktop, or press and hold on mobile, for its actions. 📌 pinned dates stay put.';
+      note.innerHTML='<strong>Monday–Sunday week:</strong> Saturday and Sunday stay side by side for easy weekend replanning. Outlined chores are forecasts; solid chores are your current plan. Right-click a card on desktop, or press and hold on mobile, for its actions. 📌 pinned dates stay put.';
       const board=document.getElementById('weekBoard'); board.className='week-board';board.innerHTML='';
       const forecast=plannerForecastMap(toISO(ws),toISO(endOfWeek(ws)));
       for(let d=0;d<7;d++){

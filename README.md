@@ -2,6 +2,13 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.32
+- Planner weeks now run **Monday → Sunday** everywhere, so Saturday and Sunday sit next to each other in Week view and chores can be dragged directly between them.
+- 2-Week and Month views use the same Monday-first calendar layout for consistency.
+- Weekly/monthly-weekday selectors in the chore editor are also displayed Monday-first; the stored weekday values are unchanged, so Sunday-fixed chores such as trash remain Sunday chores.
+- No chore dates, recurrence values, history, or Supabase state are migrated or rewritten by this update; only the calendar's week boundary/display changes.
+- PWA cache bumped to `household-v1-32`.
+
 ## v1.31
 - Fixed **Undo skip / restore cycle** so it completes cleanly instead of throwing after partially changing the skipped occurrence.
 - Restored planner cards now immediately lose their skipped styling and become normal active cards again.
