@@ -2,6 +2,13 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.33
+- Fixed **Remove from plan** when a chore's routine has been edited since the stored occurrence was created. The current routine date now wins over an obsolete `originalDue`, so old cards can fall away to the new forecast instead of immediately reappearing.
+- Chore editor schedule changes now clear an older hidden **Next due** override unless the user explicitly edits Next due during the same edit session. Changing Start date/recurrence can no longer silently preserve an obsolete one-cycle date.
+- Added a load-time repair for impossible overrides that fall before the chore's current Start date, plus removal of nonterminal stored occurrences that fall before that Start date. Completed/skipped history is preserved.
+- This specifically repairs cases like **Change Filters** having Start date Nov. 1 while an old Oct. 22 override/active card remained.
+- PWA cache bumped to `household-v1-33`; no Supabase table migration is required.
+
 ## v1.32
 - Planner weeks now run **Monday → Sunday** everywhere, so Saturday and Sunday sit next to each other in Week view and chores can be dragged directly between them.
 - 2-Week and Month views use the same Monday-first calendar layout for consistency.

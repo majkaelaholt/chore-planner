@@ -100,7 +100,12 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return starter();
       const parsed = JSON.parse(raw);
-      return normalizeState(parsed);
+      const normalized=normalizeState(parsed);
+      // Persist safe normalization repairs (for example an impossible stale
+      // Next-due override or open occurrence before a newly-later Start date)
+      // so the repaired state can also be picked up by normal cloud auto-sync.
+      if(stableStringify(parsed)!==stableStringify(normalized))localStorage.setItem(STORAGE_KEY,JSON.stringify(normalized));
+      return normalized;
     } catch (e) { console.warn(e); return starter(); }
   }
 
@@ -109,7 +114,7 @@
     delete source.__sync;
     const base = starter();
     const chores = Array.isArray(source.chores) ? source.chores.map(normalizeChore) : base.chores;
-    const instances = normalizeInstancesForVersion(source.instances,source.version,chores);
+    const instances = pruneInvalidOpenInstances(normalizeInstancesForVersion(source.instances,source.version,chores),chores);
     const history = normalizeHistoryRows(source.history,instances);
     const settings={...base.settings, ...(source.settings||{}), grace:{...base.settings.grace, ...((source.settings||{}).grace||{})}};
     // v2.4 retired person/ownership settings. Drop legacy names when old backups
@@ -173,6 +178,21 @@
     return list;
   }
 
+  function pruneInvalidOpenInstances(instances,chores=[]){
+    const byId=new Map((chores||[]).map(c=>[c.id,c]));
+    return (instances||[]).filter(i=>{
+      if(i.completed||i.skipped||i.cancelled||i.oneOff||!i.choreId)return true;
+      const chore=byId.get(i.choreId);
+      if(!chore?.startDate)return true;
+      const occurrence=i.originalDue||i.plannedDate||i.scheduledDate;
+      // A routine cannot have an active occurrence before its current Start date.
+      // This can happen after moving the schedule forward while an old planned
+      // instance is still stored locally/cloud-side. Drop only the open stale row;
+      // completed/skipped history is deliberately preserved above.
+      return !occurrence||occurrence>=chore.startDate;
+    });
+  }
+
   function normalizeHistoryRows(history,instances=[]){
     if(!Array.isArray(history))return [];
     const instanceByHistoryId=new Map(instances.map(i=>[i.id,i]));
@@ -229,6 +249,10 @@
       else out.startDate=toISO(addInterval(parseISO(legacyBase),out.recurrenceValue,out.recurrenceUnit));
     }
     out.anchorDate=out.startDate;
+    // A one-cycle override from before the routine's current Start date is stale
+    // by definition. Clearing it prevents an old target from resurrecting after
+    // the schedule has intentionally been moved forward.
+    if(out.nextDueOverride&&out.startDate&&out.nextDueOverride<out.startDate)out.nextDueOverride=null;
     return out;
   }
 
@@ -908,11 +932,22 @@
     const chore=choreById(i.choreId);if(!chore)return;
     const due=i.originalDue;
     const oldPlan=planDateOf(i)||due;
+    const t=toISO(today());
+    const currentRoutineDue=nextDue(chore);
+    // If the chore's schedule has changed since this stored occurrence was made,
+    // the current routine wins. Removing the old plan should not pin the chore to
+    // an obsolete originalDue date.
+    if(currentRoutineDue&&currentRoutineDue!==due&&currentRoutineDue>t){
+      state.instances=state.instances.filter(x=>x.id!==id);
+      saveState(`Removed from plan — forecast restored for ${formatShort(currentRoutineDue)}`);
+      renderAll();
+      return;
+    }
     // A completion-based forecast may have been using this planned date as its
     // temporary anchor. Removing the plan restores the routine target as the
     // assumption for later occurrences.
     rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,due,'unplan');
-    if(due>toISO(today())){
+    if(due>t){
       // Future target: there is no need for a stored occurrence anymore. Once
       // removed, the normal planner projection renders it as an outlined forecast.
       state.instances=state.instances.filter(x=>x.id!==id);
@@ -1876,6 +1911,17 @@
     const id=document.getElementById('choreId').value;const existing=id?choreById(id):null;
     input.value=naturalNextDue(recurrenceDraftFromForm(existing));
   }
+  function handleScheduleBasisChange(){
+    const input=document.getElementById('nextDueDate');
+    // Preserve a Next due date only when the user explicitly edits that field in
+    // this session. An older override should not survive a changed recurrence,
+    // Start date, completion seed, or behavior and silently override the new plan.
+    if(input&&input.dataset.userEdited!=='1'){
+      input.dataset.hadOverride='0';
+      refreshNextDuePreview(true);
+    }
+    updateBehaviorSummary();
+  }
 
   function scheduleSignature(c){
     return JSON.stringify({recurrenceType:c.recurrenceType||'interval',recurrenceValue:Number(c.recurrenceValue)||1,recurrenceUnit:c.recurrenceUnit,weekday:c.weekday,monthDay:c.monthDay,monthOrdinal:String(c.monthOrdinal??''),monthWeekday:c.monthWeekday,startDate:c.startDate,nextDueOverride:c.nextDueOverride,scheduleBehavior:c.scheduleBehavior,lastCompleted:c.lastCompleted});
@@ -2626,8 +2672,8 @@
     document.getElementById('batchDeleteBtn').addEventListener('click',batchDeleteSelected);
     document.getElementById('batchTagMode').addEventListener('change',e=>{document.getElementById('batchTagsLabel').classList.toggle('hidden',e.target.value==='none'||e.target.value==='clear');});
     document.getElementById('applyBatchEditBtn').addEventListener('click',e=>{e.preventDefault();applyBatchEdit();});
-    document.getElementById('recurrenceType').addEventListener('change',e=>{setRecurrenceFields(e.target.value);refreshNextDuePreview();});
-    ['recurrenceValue','recurrenceUnit','weeklyInterval','weeklyDay','monthlyDayInterval','monthDay','monthlyWeekdayInterval','monthOrdinal','monthWeekday','startDate','lastCompleted','scheduleBehavior'].forEach(id=>document.getElementById(id)?.addEventListener('change',()=>{refreshNextDuePreview();updateBehaviorSummary();}));
+    document.getElementById('recurrenceType').addEventListener('change',e=>{setRecurrenceFields(e.target.value);handleScheduleBasisChange();});
+    ['recurrenceValue','recurrenceUnit','weeklyInterval','weeklyDay','monthlyDayInterval','monthDay','monthlyWeekdayInterval','monthOrdinal','monthWeekday','startDate','lastCompleted','scheduleBehavior'].forEach(id=>document.getElementById(id)?.addEventListener('change',handleScheduleBasisChange));
     ['choreGrace','choreDateMeaning'].forEach(id=>document.getElementById(id)?.addEventListener('change',updateBehaviorSummary));
     document.getElementById('nextDueDate').addEventListener('input',e=>{e.target.dataset.userEdited='1';});
     document.getElementById('clearNextDueBtn').addEventListener('click',()=>{const input=document.getElementById('nextDueDate');input.dataset.hadOverride='0';input.dataset.userEdited='0';refreshNextDuePreview(true);toast('Next date reset to schedule');});
