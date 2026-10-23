@@ -809,7 +809,10 @@
         // newer routine. Only the newest real completion is allowed to rebase it.
         if(isNewestCompletion){
           if(behavior==='fixed')reflowFuturePlansToFixedRhythm(chore,i,'fixed-completion');
-          else rebaseFuturePlansAfterAssumptionChange(chore,i,intendedPlan,actualDate,'completion');
+          else {
+            const priorAssumption=i.tentativeCatchup?(i.catchupOriginalDue||i.originalDue||intendedPlan):intendedPlan;
+            rebaseFuturePlansAfterAssumptionChange(chore,i,priorAssumption,actualDate,'completion');
+          }
           chore.lastSkippedDue=null;
           chore.lastRolledDue=null;
           chore.nextDueOverride=null;
@@ -820,6 +823,10 @@
         chore.lastDueSatisfied=maxISO(chore.lastDueSatisfied,satisfiedThrough||i.originalDue||intendedPlan||actualDate);
       }
     }
+    if(i.tentativeCatchup){
+      delete i.tentativeCatchup;delete i.catchupOriginalPlan;delete i.catchupOriginalSkippedAt;delete i.catchupOriginalDue;
+      delete i.catchupOriginalSnoozed;delete i.catchupOriginalManualPlan;delete i.catchupOriginalPinned;
+    }
     saveState(actualDate===toISO(today())?'Marked complete':'Backdated completion logged');
     renderAll();
     return true;
@@ -827,6 +834,7 @@
 
   function skipInstance(id,source='manual',silent=false){
     const i=instanceById(id);if(!i||i.completed||i.skipped||i.cancelled)return;
+    if(i.tentativeCatchup){returnTentativeCatchupToSkipped(id,silent);return;}
     const now=new Date();
     const plan=planDateOf(i)||i.originalDue||toISO(today());
     const cycleDue=i.originalDue||plan;
@@ -855,7 +863,7 @@
   }
 
 
-  function restoreSkippedInstance(id){
+  function restoreSkippedInstance(id,options={}){
     const i=instanceById(id);if(!i||!i.skipped||i.cancelled)return false;
     if(i.skipSource==='covered-by-completion'){
       toast('This older cycle was covered by a later completion, so there is nothing separate to restore.');
@@ -873,6 +881,15 @@
     const historyRow=state.history.find(h=>h.instanceId===i.id&&(h.action==='skipped'||(!h.completedAt&&h.skippedAt)));
     const plan=historyRow?.plannedFor||planDateOf(i)||i.originalDue||toISO(today());
     const cycleDue=historyRow?.originallyDue||i.originalDue||plan;
+    if(options.preserveCadence){
+      i.tentativeCatchup=true;
+      i.catchupOriginalPlan=plan;
+      i.catchupOriginalSkippedAt=historyRow?.skippedAt||i.skippedAt||null;
+      i.catchupOriginalDue=cycleDue;
+      i.catchupOriginalSnoozed=Boolean(i.snoozed);
+      i.catchupOriginalManualPlan=Boolean(i.manualPlan);
+      i.catchupOriginalPinned=Boolean(i.pinned);
+    }
     const laterCompletion=i.choreId&&state.instances.some(x=>x.id!==i.id&&x.choreId===i.choreId&&x.completed&&!x.cancelled&&completionDateOf(x)&&completionDateOf(x)>cycleDue);
     if(laterCompletion&&!confirm(`A later completion of “${i.name}” already exists. Restoring this older skipped cycle may make it appear due again. Restore it anyway?`))return false;
 
@@ -887,10 +904,11 @@
 
     if(chore){
       const behavior=effectiveScheduleBehavior(chore);
-      if((chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'){
-        // Skipping a flexible occurrence may have temporarily re-anchored later
-        // plans to the routine target. Undo that assumption so the restored
-        // occurrence once again anchors from its current planned day.
+      if((chore.recurrenceType||'interval')==='interval'&&behavior!=='fixed'&&!options.preserveCadence){
+        // A normal Undo skip restores the old planning assumption. Extra Energy
+        // catch-up is different: it is only a tentative opportunity, so future
+        // dates must stay exactly where the skipped cycle left them until the
+        // chore is actually completed.
         rebaseFuturePlansAfterAssumptionChange(chore,i,cycleDue,plan,'restore-skip');
       }
       const same=state.instances.filter(x=>x.choreId===chore.id);
@@ -916,7 +934,30 @@
       chore.lastCompleted=maxISO(...completedDates);
       chore.nextDueOverride=null;
     }
-    saveState('Skip undone — cycle restored');renderAll();return true;
+    if(!options.silent){saveState('Skip undone — cycle restored');renderAll();}
+    return true;
+  }
+
+  function returnTentativeCatchupToSkipped(id,silent=false){
+    const i=instanceById(id);if(!i||!i.tentativeCatchup||i.completed||i.cancelled)return false;
+    const chore=choreById(i.choreId);
+    const cycleDue=i.catchupOriginalDue||i.originalDue||planDateOf(i)||toISO(today());
+    const originalPlan=i.catchupOriginalPlan||i.originalDue||cycleDue;
+    const skippedAt=i.catchupOriginalSkippedAt||new Date().toISOString();
+    i.skipped=true;i.skippedAt=skippedAt;i.skipSource='manual';
+    i.pinned=Boolean(i.catchupOriginalPinned);i.snoozed=Boolean(i.catchupOriginalSnoozed);i.manualPlan=Boolean(i.catchupOriginalManualPlan);
+    setPlanDate(i,originalPlan);
+    delete i.tentativeCatchup;delete i.catchupOriginalPlan;delete i.catchupOriginalSkippedAt;delete i.catchupOriginalDue;
+    delete i.catchupOriginalSnoozed;delete i.catchupOriginalManualPlan;delete i.catchupOriginalPinned;
+    state.history=state.history.filter(h=>!(h.instanceId===i.id&&(h.action==='skipped'||(!h.completedAt&&h.skippedAt))));
+    state.history.push({id:uid('hist'),action:'skipped',instanceId:i.id,choreId:i.choreId||null,name:i.name,category:i.category,skippedAt,originallyDue:cycleDue,plannedFor:originalPlan});
+    if(chore){
+      chore.lastSkippedDue=maxISO(chore.lastSkippedDue,cycleDue);
+      chore.lastDueSatisfied=maxISO(chore.lastDueSatisfied,cycleDue);
+      chore.nextDueOverride=null;
+    }
+    if(!silent){saveState('Catch-up put back in skipped');renderAll();}
+    return true;
   }
 
   function canUnplanInstance(i){
@@ -930,6 +971,7 @@
 
   function unplanInstance(id){
     const i=instanceById(id);if(!canUnplanInstance(i))return;
+    if(i.tentativeCatchup){returnTentativeCatchupToSkipped(id);return;}
     const chore=choreById(i.choreId);if(!chore)return;
     const due=i.originalDue;
     const oldPlan=planDateOf(i)||due;
@@ -975,7 +1017,7 @@
     i.snoozed=Boolean(i.originalDue&&date!==i.originalDue);
     i.manualPlan=true;
     i.pinned=Boolean(pinned);
-    if(chore)rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,date,'plan');
+    if(chore&&!i.tentativeCatchup)rebaseFuturePlansAfterAssumptionChange(chore,i,oldPlan,date,'plan');
     if(!silent){saveState(i.pinned?'Plan pinned':'Plan updated'); renderAll();}
   }
 
@@ -1287,14 +1329,14 @@
     // occurrences.
     while(due<startIso && guard++<4000){
       const planned=plannedByDue.get(due);
-      const next=advanceProjectedDue(chore,due,planned?planDateOf(planned):null);
+      const next=advanceProjectedDue(chore,due,planned?(planned.tentativeCatchup?due:planDateOf(planned)):null);
       if(!next||next<=due) return out;
       due=next;
     }
     while(due<=endIso && guard++<4000){
       const planned=plannedByDue.get(due);
       if(!planned) out.push(due);
-      const next=advanceProjectedDue(chore,due,planned?planDateOf(planned):null);
+      const next=advanceProjectedDue(chore,due,planned?(planned.tentativeCatchup?due:planDateOf(planned)):null);
       if(!next||next<=due) break;
       due=next;
     }
@@ -1378,9 +1420,14 @@
   function plannerLoadInfo(actual,previews){
     const openActual=(actual||[]).filter(i=>!i.completed&&!i.skipped&&!i.cancelled&&!i.historicalSeed);
     const open=[...openActual,...(previews||[])];
-    const laundryCount=open.filter(isLaundryPlannerItem).length;
-    const nonLaundryCount=open.length-laundryCount;
-    return {units:nonLaundryCount+(laundryCount?1:0),laundryCount};
+    const laundry=open.filter(isLaundryPlannerItem);
+    const nonLaundry=open.filter(item=>!isLaundryPlannerItem(item));
+    const nonLaundryEffort=nonLaundry.reduce((sum,item)=>sum+effortScoreForChore(choreById(item.choreId)||item),0);
+    // Laundry is machine-limited work: several loads can occupy a day without
+    // competing for attention like the same number of hands-on chores. Treat a
+    // same-day laundry cluster as one small visual lane for the day-load label.
+    const laundryEffort=laundry.length>=2?1:laundry.reduce((sum,item)=>sum+effortScoreForChore(choreById(item.choreId)||item),0);
+    return {effort:nonLaundryEffort+laundryEffort,nonLaundryEffort,nonLaundryCount:nonLaundry.length,laundryCount:laundry.length};
   }
 
   function laundryGroupSummary(items){
@@ -1507,8 +1554,8 @@
         const previews=(forecast.get(iso)||[]).sort((a,b)=>(a.importance==='essential'?0:a.importance==='regular'?1:2)-(b.importance==='essential'?0:b.importance==='regular'?1:2)||a.name.localeCompare(b.name));
         const col=document.createElement('section'); col.className='day-column'+(sameDate(date,today())?' today':''); col.dataset.date=iso;
         const loadInfo=plannerLoadInfo(actual,previews);
-        const load=loadInfo.units;
-        const loadText=loadInfo.laundryCount>=2&&load<=2?'Laundry day':load<=1?'Light':load<=3?'Normal':'Busy';
+        const load=loadInfo.effort;
+        const loadText=loadInfo.laundryCount>=2&&loadInfo.nonLaundryEffort<=2?'Laundry day':load<=2?'Light':load<=5?'Normal':'Busy';
         col.innerHTML=`<div class="day-head"><div><div class="day-name">${date.toLocaleDateString(undefined,{weekday:'short'})}</div><div class="day-date">${date.getDate()}</div></div><div class="load-label">${load?loadText:'Clear'}</div></div><div class="day-tasks"></div>`;
         const wrap=col.querySelector('.day-tasks');
         plannerDisplayItems(actual,previews).forEach(item=>wrap.appendChild(item.laundryGroup?weekLaundryGroup(item.items,iso):(item.preview?plannerForecastCard(item):plannerCard(item))));
@@ -1574,7 +1621,7 @@
       actions.push(['done','✓ Done today']);
       actions.push(['done-date','📅 Mark done on…']);
       actions.push(['move','↪ Move / re-plan']);
-      if(canUnplanInstance(i))actions.push(['unplan','↩ Remove from plan']);
+      if(canUnplanInstance(i))actions.push(['unplan',i.tentativeCatchup?'↩ Return to skipped':'↩ Remove from plan']);
       actions.push(['skip','⏭ Skip this cycle']);
     }else if(i.completed&&!i.historicalSeed){
       actions.push(['edit-completion','✎ Edit completion']);
@@ -2269,6 +2316,32 @@
     toast('Recovery plan applied — today is allowed to be lighter');
   }
 
+  function unresolvedSkippedEnergyCandidates(){
+    const byChore=new Map();
+    const completionDateFromHistory=h=>h.completedDate||(h.completedAt?localDateFromTimestamp(h.completedAt):null);
+    state.instances
+      .filter(i=>i.choreId&&i.skipped&&!i.cancelled&&i.skipSource!=='covered-by-completion')
+      .sort((a,b)=>(b.originalDue||planDateOf(b)||'').localeCompare(a.originalDue||planDateOf(a)||''))
+      .forEach(i=>{
+        const chore=choreById(i.choreId);if(!chore||chore.active===false||byChore.has(chore.id))return;
+        const skippedDue=i.originalDue||planDateOf(i);if(!skippedDue)return;
+        // A later real completion means the missed cycle is already functionally
+        // behind us. This is what keeps yesterday's litter from becoming a
+        // nonsensical second litter suggestion after today's litter was done.
+        const laterCompletion=(chore.lastCompleted&&chore.lastCompleted>skippedDue)||
+          state.instances.some(x=>x.id!==i.id&&x.choreId===chore.id&&x.completed&&!x.cancelled&&completionDateOf(x)>skippedDue)||
+          state.history.some(h=>h.choreId===chore.id&&h.action!=='skipped'&&h.completedAt&&completionDateFromHistory(h)>skippedDue);
+        if(laterCompletion)return;
+        // Likewise, if a newer occurrence is already explicitly active/planned,
+        // doing that occurrence is the useful action; don't resurrect the older
+        // skipped copy as extra work.
+        const laterOpen=state.instances.some(x=>x.id!==i.id&&x.choreId===chore.id&&!x.completed&&!x.skipped&&!x.cancelled&&(x.originalDue||planDateOf(x))>skippedDue);
+        if(laterOpen)return;
+        byChore.set(chore.id,{kind:'skipped',chore,instance:i,date:skippedDue,due:skippedDue,ageDays:Math.max(0,daysBetween(skippedDue,toISO(today())))});
+      });
+    return [...byChore.values()];
+  }
+
   function energyCandidates(){
     const t=toISO(today());
     const horizon=toISO(addDays(today(),30));
@@ -2287,44 +2360,60 @@
       candidates.push({kind:'forecast',chore,date:item.dueDate,due:item.dueDate});
     }));
 
-    // Extra Energy should offer one next opportunity per routine, not several
-    // copies of the same recurring chore from later in the month.
+    // One upcoming opportunity per routine.
     const nextByChore=new Map();
     candidates.sort((a,b)=>a.date.localeCompare(b.date)).forEach(x=>{
       if(!nextByChore.has(x.chore.id))nextByChore.set(x.chore.id,x);
     });
-    return [...nextByChore.values()].map(x=>({...x,days:daysBetween(t,x.date)}));
+
+    // A still-unresolved skipped cycle is more useful than doing that same
+    // routine early. Replace its future suggestion with the catch-up option.
+    const skipped=unresolvedSkippedEnergyCandidates();
+    const skippedIds=new Set(skipped.map(x=>x.chore.id));
+    const future=[...nextByChore.values()].filter(x=>!skippedIds.has(x.chore.id)).map(x=>({...x,days:daysBetween(t,x.date)}));
+    return [...skipped,...future];
+  }
+
+  function energyBestNextSort(a,b){
+    if((a.kind==='skipped')!==(b.kind==='skipped'))return a.kind==='skipped'?-1:1;
+    if(a.kind==='skipped'&&b.kind==='skipped')return a.date.localeCompare(b.date)||effortScoreForChore(a.chore)-effortScoreForChore(b.chore);
+    return a.date.localeCompare(b.date);
   }
 
   function renderEnergySuggestions(){
     const wrap=document.getElementById('energySuggestions');wrap.innerHTML='';
     const t=toISO(today());
     let pool=energyCandidates();
-    if(energyMode==='deep') pool=pool.filter(x=>x.chore.category==='Deep Clean').sort((a,b)=>a.date.localeCompare(b.date));
-    else if(energyMode==='quick') pool=pool.filter(x=>isSmallWinChore(x.chore)).sort((a,b)=>a.date.localeCompare(b.date));
-    else if(energyMode==='future') pool=pool.sort((a,b)=>{
+    if(energyMode==='catchup') pool=pool.filter(x=>x.kind==='skipped').sort(energyBestNextSort);
+    else if(energyMode==='deep') pool=pool.filter(x=>x.chore.category==='Deep Clean').sort(energyBestNextSort);
+    else if(energyMode==='quick') pool=pool.filter(x=>isSmallWinChore(x.chore)).sort(energyBestNextSort);
+    else if(energyMode==='future') pool=pool.filter(x=>x.kind!=='skipped').sort((a,b)=>{
       const ai=a.chore.importance==='essential'?0:a.chore.importance==='regular'?1:2;
       const bi=b.chore.importance==='essential'?0:b.chore.importance==='regular'?1:2;
       return ai-bi||a.date.localeCompare(b.date);
     });
-    else pool=pool.sort((a,b)=>a.date.localeCompare(b.date));
+    else pool=pool.sort(energyBestNextSort);
 
     pool.slice(0,3).forEach(x=>{
       const card=document.createElement('div');card.className='task-card';
-      const source=x.kind==='planned'?'Planned':'Forecast';
-      card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${source} ${relativeDate(x.date).toLowerCase()}</span><span>•</span><span>${effortLabel(effortScoreForChore(x.chore))} effort</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">Move to today</button>`;
+      const catchup=x.kind==='skipped';
+      const source=catchup?`Skipped ${relativeDate(x.date).toLowerCase()} • useful catch-up`:x.kind==='planned'?`Planned ${relativeDate(x.date).toLowerCase()}`:`Forecast ${relativeDate(x.date).toLowerCase()}`;
+      card.innerHTML=`<div><div class="task-name">${CATEGORY_EMOJI[x.chore.category]} ${esc(x.chore.name)}</div><div class="task-meta"><span>${esc(source)}</span><span>•</span><span>${effortLabel(effortScoreForChore(x.chore))} effort</span><span>•</span><span>${importanceLabel[x.chore.importance]}</span></div></div><button class="secondary-btn">${catchup?'Bring back today':'Move to today'}</button>`;
       card.querySelector('button').addEventListener('click',()=>{
-        if(x.kind==='planned'&&x.instance){
+        if(catchup&&x.instance){
+          if(!restoreSkippedInstance(x.instance.id,{silent:true,preserveCadence:true}))return;
+          moveInstance(x.instance.id,t,'either',false);
+        }else if(x.kind==='planned'&&x.instance){
           moveInstance(x.instance.id,t,'either',Boolean(x.instance.pinned));
         }else{
           scheduleForecast(x.chore.id,x.due,t,'either',false);
         }
         document.getElementById('energyDialog').close();
-        toast('Moved into today — still optional');
+        toast(catchup?'Catch-up added for today — future dates stay put until you complete it':'Moved into today — still optional');
       });
       wrap.appendChild(card);
     });
-    if(!wrap.children.length) wrap.innerHTML='<div class="empty-state"><h3>Nothing useful to pull forward.</h3><p>That is a perfectly good reason to stop.</p></div>';
+    if(!wrap.children.length) wrap.innerHTML=energyMode==='catchup'?'<div class="empty-state"><h3>No useful skipped chores to catch up.</h3><p>Older skips that were followed by a later completion or newer active cycle stay out of the way.</p></div>':'<div class="empty-state"><h3>Nothing useful to pull forward.</h3><p>That is a perfectly good reason to stop.</p></div>';
   }
 
   function maxISO(...xs){return xs.filter(Boolean).sort().slice(-1)[0];}

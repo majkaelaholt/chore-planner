@@ -2,6 +2,21 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.36
+- Extra Energy `Bring back today` is now tentative catch-up: it does not move completion-based future forecasts just because you intend to catch up.
+- A tentative catch-up only re-anchors future recurrence after a real completion is logged.
+- `Remove from plan` becomes `Return to skipped` for tentative catch-ups, restoring the original skipped state without changing future dates.
+- Re-skipping a tentative catch-up also restores the original skipped state without cadence drift.
+- PWA cache bumped to `household-v1-36`.
+
+## v1.35
+
+- Fixed Week-view Laundry groups so the expand/collapse control truly hides and restores the individual laundry cards.
+- Day load labels now use effort weight rather than raw card count. A clustered laundry lane counts lightly; 1 Medium + 2 Quick chores reads Normal, not Busy.
+- Extra Energy now prioritizes unresolved skipped chores before doing future chores early. Old skips are excluded when a later completion or newer active occurrence already supersedes them (for example, daily litter skips).
+- Added a Catch up filter to Extra Energy. Choosing a skipped suggestion restores that occurrence and moves it to today.
+- PWA cache bumped to `household-v1-35`.
+
 ## v1.34
 
 - Week Planner now groups two or more same-day Laundry-category items into one compact `🧺 Laundry` card. Expand the group to see, drag, complete, move, skip, or edit each item individually.

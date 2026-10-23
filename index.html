@@ -450,9 +450,10 @@
   <dialog id="energyDialog" class="modal energy-modal">
     <form method="dialog">
       <div class="modal-head"><div><p class="section-kicker">OPTIONAL MODE</p><h2>Want one more thing?</h2></div><button class="icon-btn" value="cancel" aria-label="Close">×</button></div>
-      <p class="modal-copy">These are existing upcoming chores from your planner. Pull one into today if it sounds satisfying — or close this and be done.</p>
+      <p class="modal-copy">Useful catch-up comes first, then upcoming chores. A skipped cycle disappears from suggestions once a later completion or newer active cycle makes it irrelevant.</p>
       <div class="energy-filters" id="energyFilters">
-        <button type="button" class="chip active" data-energy="soon">Due soon</button>
+        <button type="button" class="chip active" data-energy="soon">Best next</button>
+        <button type="button" class="chip" data-energy="catchup">Catch up</button>
         <button type="button" class="chip" data-energy="quick">Quick win</button>
         <button type="button" class="chip" data-energy="deep">Deep clean</button>
         <button type="button" class="chip" data-energy="future">Help future me</button>

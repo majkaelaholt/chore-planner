@@ -920,3 +920,6 @@ select:disabled { opacity: .62; cursor: not-allowed; }
   border-color: rgba(79,63,49,.16);
 }
 .calendar-task.laundry-group-compact .calendar-task-name { font-weight: 800; }
+
+/* v1.35 — author styles must not override the laundry group's collapsed state. */
+.planner-laundry-items[hidden] { display: none !important; }
