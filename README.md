@@ -2,6 +2,14 @@
 
 A desktop + iPhone-friendly PWA for recurring household chores. The main goal is not to maximize productivity; it is to make the stopping point obvious.
 
+## v1.34
+
+- Week Planner now groups two or more same-day Laundry-category items into one compact `🧺 Laundry` card. Expand the group to see, drag, complete, move, skip, or edit each item individually.
+- A laundry-heavy day now counts its laundry cluster as one visual planning lane for the day header, so several washer loads no longer make an otherwise-light day read as `Busy`. When laundry is the main work on an otherwise light day, the header says `Laundry day`.
+- 2-Week and Month views also compress multiple same-day laundry items into one `Laundry ×N` row; tapping it opens that week for individual planning.
+- This is display-only grouping: recurrence, completion, history, effort, and Supabase data remain separate per chore. No state-schema or Supabase migration is required.
+- PWA cache bumped to `household-v1-34`.
+
 ## v1.33
 - Fixed **Remove from plan** when a chore's routine has been edited since the stored occurrence was created. The current routine date now wins over an obsolete `originalDue`, so old cards can fall away to the new forecast instead of immediately reappearing.
 - Chore editor schedule changes now clear an older hidden **Next due** override unless the user explicitly edits Next due during the same edit session. Changing Start date/recurrence can no longer silently preserve an obsolete one-cycle date.

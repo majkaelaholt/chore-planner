@@ -10,6 +10,7 @@
   const dayMs = 86400000;
   let plannerWeekStart = startOfWeek(new Date());
   let plannerViewMode = 'week';
+  const expandedLaundryDates = new Set();
   let activeCategory = 'All';
   let choreFilters = { importance:'all', effort:'all', tag:'all', status:'all' };
   let choreSort = { key:'name', dir:'asc' };
@@ -1360,6 +1361,70 @@
     },true);
   }
 
+  function isLaundryPlannerItem(item){
+    return item?.category==='Laundry';
+  }
+
+  function plannerDisplayItems(actual,previews){
+    const combined=[...(actual||[]),...(previews||[])];
+    const laundry=combined.filter(isLaundryPlannerItem);
+    if(laundry.length<2)return combined;
+    const firstLaundryIndex=combined.findIndex(isLaundryPlannerItem);
+    const display=combined.filter(item=>!isLaundryPlannerItem(item));
+    display.splice(Math.min(firstLaundryIndex,display.length),0,{laundryGroup:true,items:laundry});
+    return display;
+  }
+
+  function plannerLoadInfo(actual,previews){
+    const openActual=(actual||[]).filter(i=>!i.completed&&!i.skipped&&!i.cancelled&&!i.historicalSeed);
+    const open=[...openActual,...(previews||[])];
+    const laundryCount=open.filter(isLaundryPlannerItem).length;
+    const nonLaundryCount=open.length-laundryCount;
+    return {units:nonLaundryCount+(laundryCount?1:0),laundryCount};
+  }
+
+  function laundryGroupSummary(items){
+    const planned=items.filter(i=>!i.preview&&!i.completed&&!i.skipped&&!i.cancelled&&!i.historicalSeed).length;
+    const forecast=items.filter(i=>i.preview).length;
+    const done=items.filter(i=>!i.preview&&(i.completed||i.historicalSeed)).length;
+    const skipped=items.filter(i=>!i.preview&&i.skipped).length;
+    const parts=[];
+    if(planned)parts.push(`${planned} planned`);
+    if(forecast)parts.push(`${forecast} forecast`);
+    if(done)parts.push(`${done} done`);
+    if(skipped)parts.push(`${skipped} skipped`);
+    return parts.join(' • ')||`${items.length} items`;
+  }
+
+  function weekLaundryGroup(items,dateIso){
+    const group=document.createElement('section');
+    group.className='planner-laundry-group';
+    const expanded=expandedLaundryDates.has(dateIso);
+    const toggle=document.createElement('button');
+    toggle.type='button';toggle.className='planner-laundry-toggle';toggle.setAttribute('aria-expanded',String(expanded));
+    toggle.innerHTML=`<span><strong>🧺 Laundry</strong><small>${items.length} item${items.length===1?'':'s'} • ${esc(laundryGroupSummary(items))}</small></span><span class="planner-laundry-chevron" aria-hidden="true">⌄</span>`;
+    const body=document.createElement('div');body.className='planner-laundry-items';body.hidden=!expanded;
+    items.forEach(item=>body.appendChild(item.preview?plannerForecastCard(item):plannerCard(item)));
+    toggle.addEventListener('click',()=>{
+      const nowExpanded=body.hidden;
+      body.hidden=!nowExpanded;
+      toggle.setAttribute('aria-expanded',String(nowExpanded));
+      group.classList.toggle('expanded',nowExpanded);
+      if(nowExpanded)expandedLaundryDates.add(dateIso);else expandedLaundryDates.delete(dateIso);
+    });
+    group.classList.toggle('expanded',expanded);
+    group.append(toggle,body);
+    return group;
+  }
+
+  function compactLaundryGroup(items,cellDate){
+    const btn=document.createElement('button');btn.type='button';btn.className='calendar-task laundry-group-compact';
+    btn.innerHTML=`<span class="calendar-task-name">🧺 Laundry ×${items.length}</span><span class="calendar-task-meta">${esc(laundryGroupSummary(items))}</span>`;
+    btn.title=`Laundry • ${items.length} items • ${laundryGroupSummary(items)} • open week to view individually`;
+    btn.addEventListener('click',e=>{e.stopPropagation();openPlannerWeekForDate(cellDate);});
+    return btn;
+  }
+
   function compactPlannerItem(item){
     const btn=document.createElement('button');
     btn.type='button';
@@ -1399,7 +1464,7 @@
       const iso=toISO(cellDate);
       const actual=plannerItemsForDate(iso);
       const previews=(forecast.get(iso)||[]).sort((a,b)=>(a.importance==='essential'?0:a.importance==='regular'?1:2)-(b.importance==='essential'?0:b.importance==='regular'?1:2)||a.name.localeCompare(b.name));
-      const items=[...actual,...previews];
+      const items=plannerDisplayItems(actual,previews);
       const outside=plannerViewMode==='month'&&cellDate.getMonth()!==period.start.getMonth();
       const cell=document.createElement('section');
       cell.className='calendar-day'+(sameDate(cellDate,today())?' today':'')+(outside?' outside-month':'');
@@ -1407,7 +1472,7 @@
       cell.innerHTML=`<button type="button" class="calendar-date-btn" aria-label="Open week of ${formatLong(iso)}"><span>${cellDate.getDate()}</span>${plannerViewMode==='fortnight'?`<small>${cellDate.toLocaleDateString(undefined,{month:'short'})}</small>`:''}</button><div class="calendar-items"></div>`;
       const wrap=cell.querySelector('.calendar-items');
       const limit=plannerViewMode==='month'?4:6;
-      items.slice(0,limit).forEach(item=>wrap.appendChild(compactPlannerItem(item)));
+      items.slice(0,limit).forEach(item=>wrap.appendChild(item.laundryGroup?compactLaundryGroup(item.items,cellDate):compactPlannerItem(item)));
       if(items.length>limit){
         const more=document.createElement('button');more.type='button';more.className='calendar-more';more.textContent=`+${items.length-limit} more`;more.addEventListener('click',e=>{e.stopPropagation();openPlannerWeekForDate(cellDate);});wrap.appendChild(more);
       }
@@ -1441,12 +1506,12 @@
         const actual=plannerItemsForDate(iso);
         const previews=(forecast.get(iso)||[]).sort((a,b)=>(a.importance==='essential'?0:a.importance==='regular'?1:2)-(b.importance==='essential'?0:b.importance==='regular'?1:2)||a.name.localeCompare(b.name));
         const col=document.createElement('section'); col.className='day-column'+(sameDate(date,today())?' today':''); col.dataset.date=iso;
-        const load=actual.filter(i=>!i.completed).length+previews.length;
-        const loadText=load<=1?'Light':load<=3?'Normal':'Busy';
+        const loadInfo=plannerLoadInfo(actual,previews);
+        const load=loadInfo.units;
+        const loadText=loadInfo.laundryCount>=2&&load<=2?'Laundry day':load<=1?'Light':load<=3?'Normal':'Busy';
         col.innerHTML=`<div class="day-head"><div><div class="day-name">${date.toLocaleDateString(undefined,{weekday:'short'})}</div><div class="day-date">${date.getDate()}</div></div><div class="load-label">${load?loadText:'Clear'}</div></div><div class="day-tasks"></div>`;
         const wrap=col.querySelector('.day-tasks');
-        actual.forEach(i=>wrap.appendChild(plannerCard(i)));
-        previews.forEach(i=>wrap.appendChild(plannerForecastCard(i)));
+        plannerDisplayItems(actual,previews).forEach(item=>wrap.appendChild(item.laundryGroup?weekLaundryGroup(item.items,iso):(item.preview?plannerForecastCard(item):plannerCard(item))));
         col.addEventListener('dragover',e=>{e.preventDefault();col.classList.add('drag-over');});
         col.addEventListener('dragleave',()=>col.classList.remove('drag-over'));
         col.addEventListener('drop',e=>{
